@@ -1,4 +1,9 @@
 import { expect, request as requestFactory, test } from '@playwright/test';
+import { isolatePortfolioState } from './_state';
+
+test.beforeEach(async ({ page }) => {
+  await isolatePortfolioState(page);
+});
 
 const DEFAULT_SETTINGS = {
   per_position_cap_pct: 0.1,
@@ -195,6 +200,8 @@ test('candidate sizing renders a cap-breach response', async ({ page }) => {
 
   await page.goto(`/candidate/${candidate.ticker}`);
   await page.getByRole('button', { name: 'Size this trade' }).first().click();
-  await expect(page.getByText('Cannot size without breaching cap')).toBeVisible({ timeout: 45_000 });
+  // A cap-breach is surfaced as "Caps respected → No" (there is no separate
+  // "cannot size" banner in the current UI); wait for the sizing result first.
+  await expect(page.getByText('Suggested shares')).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText('Caps respected').locator('xpath=..').getByText('No')).toBeVisible();
 });

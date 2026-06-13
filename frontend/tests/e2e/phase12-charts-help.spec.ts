@@ -47,7 +47,7 @@ test('strategy page mounts equity and yearly charts with citations', async ({ pa
   await expect(page.getByTestId('yearly-return-chart')).toBeVisible();
   await expect(page.getByTestId('yearly-risk-chart')).toBeVisible();
   await expect(page.getByText('George & Hwang (2004)').first()).toBeVisible();
-  await expect(page.getByText('Limitations')).toBeVisible();
+  await expect(page.getByText('Limitations').first()).toBeVisible();
 });
 
 test('candidate page mounts price chart with level labels', async ({ page }) => {

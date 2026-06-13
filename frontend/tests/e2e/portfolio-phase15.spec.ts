@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { isolatePortfolioState } from './_state';
+
+test.beforeEach(async ({ page }) => {
+  await isolatePortfolioState(page);
+});
 
 const SETTINGS = {
   per_position_cap_pct: 0.1,

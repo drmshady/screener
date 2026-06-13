@@ -22,6 +22,17 @@ from ..data.shariah_sources import (
 from ..models.shariah import ShariahStatus
 
 DEFAULT_ACTIVE_SOURCES = ["spus_holdings"]
+
+# Operator-curated Shariah inclusions: names asserted compliant by the operator
+# that the external sources (SPUS / FTSE USA Shariah) omit because those indices
+# only track larger caps. Applied server-side so they're compliant + in the
+# universe regardless of browser/server-synced settings. A user exclusion still
+# overrides these (status() checks exclusion first; _compliant_universe subtracts
+# exclusions). Map ticker -> rationale note.
+OPERATOR_CURATED_INCLUSIONS: dict[str, str] = {
+    "LNTH": "Operator-asserted Shariah-compliant; not listed in SPUS/FTSE USA Shariah.",
+}
+
 KNOWN_CONFIGURABLE_SOURCES = {
     "spus_holdings",
     "spwo_holdings",
@@ -136,6 +147,13 @@ class ShariahLookup:
         self.active_sources = normalized["active_sources"]
         self.inclusion = {row["ticker"]: row for row in normalized["inclusion"]}
         self.exclusion = {row["ticker"]: row for row in normalized["exclusion"]}
+        # Merge operator-curated inclusions, letting an explicit user inclusion
+        # (with its own note) take precedence over the curated default.
+        for ticker, note in OPERATOR_CURATED_INCLUSIONS.items():
+            self.inclusion.setdefault(
+                ticker,
+                {"ticker": ticker, "direction": "include", "note": note, "added_at": None},
+            )
         self.db_path = Path(db_path)
         self.manifest_path = Path(manifest_path)
         self.manifest = load_manifest(self.manifest_path)

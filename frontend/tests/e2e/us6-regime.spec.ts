@@ -11,7 +11,9 @@ test('home dashboard renders regime and per-strategy favorability tags determini
   await expect(panel.getByText('Short-Term ATR Breakout')).toBeVisible();
   await expect(panel.getByText(/Favorable|Neutral|Unfavorable/).first()).toBeVisible();
   await expect(panel.getByRole('term').filter({ hasText: 'SPY close' })).toBeVisible();
-  await expect(panel.getByText('Breadth above SMA 200')).toBeVisible();
+  // "Breadth above SMA 200" is split across <Abbr> tooltip wrappers, so match the
+  // <dt> (role=term) by substring rather than as one contiguous text node.
+  await expect(panel.getByRole('term').filter({ hasText: 'Breadth' })).toBeVisible();
 
   const firstSnapshot = await panel.innerText();
   await page.reload();

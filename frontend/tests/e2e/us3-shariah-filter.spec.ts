@@ -1,4 +1,9 @@
 import { expect, request as requestFactory, test } from '@playwright/test';
+import { isolatePortfolioState } from './_state';
+
+test.beforeEach(async ({ page }) => {
+  await isolatePortfolioState(page);
+});
 
 const STRATEGIES = [
   'midterm_52w_high_momentum',

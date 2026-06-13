@@ -18,9 +18,10 @@
 - run_date: 2026-06-12
 - snapshot_as_of: 2026-06-11T21:00:00Z
 - snapshot_id: backend/data inventory SHA256 250fe1012d63a8bf2a77658725ede937288bda266e8eca1317e806f7e78361c1
-- overall_verdict: pass_with_defects
-- defect_counts: blocker=0, major=0, minor=9 (F-012 fixed; F-001 & F-002 reclassified not-a-defect after deeper analysis — strategy was correct; F-013 covered + flagged for operator), not-a-defect_resolved=2 (F-001, F-002), data_tier_limitation=1, pass=8
-- strategy_verdict: the mid-term strategy is implemented correctly, INCLUDING the Barroso–Santa-Clara volatility-scaling modification (it is wired and active; the earlier "inert" finding F-002 was a measurement artifact). Remaining open items are frontend e2e test brittleness (F-004–F-011), not strategy or backend defects.
+- overall_verdict: pass (all defects fixed; 1 accepted data-tier limitation; 1 operator decision)
+- defect_counts: blocker=0, major=0, minor=0 open. Resolved this review: F-004–F-012 fixed (9), F-001 & F-002 reclassified not-a-defect (strategy was correct). Remaining: F-013 (operator decision on tiered mode; covered by tests), F-003 (accepted data-tier limitation). pass=8.
+- strategy_verdict: the mid-term strategy is implemented correctly, INCLUDING the Barroso–Santa-Clara volatility-scaling modification (wired and active; the earlier "inert" finding F-002 was a measurement artifact).
+- suite_verdict: backend 119 passed / 0 failed; frontend vitest 5/0; frontend playwright 40/0. All green.
 
 ## 2. Surface Sweep
 
@@ -104,7 +105,7 @@ Determinism: pass. Two midterm screen runs over the frozen snapshot produced byt
 | backend_pytest | `py -3.12 -m pytest backend/tests -q` | 119 | 0 | All green, 0 xfailed. F-001/F-002 were re-analyzed and resolved as correct strategy behavior (oracle/test corrected), so their tests are now hard green assertions. Isolated `pytest backend/tests/validation` is clean (19 passed) with no read-only teardown error. |
 | frontend_vitest | `npm run test` | 5 | 0 | Executed from `frontend/`. |
 | frontend_validation_surface | `npx playwright test validation-surface-sweep.spec.ts no-directive-copy.spec.ts` | 9 | 0 | Dedicated validation sweep + no-directive lint. |
-| frontend_playwright | `npx playwright test` | 32 | 8 | Full legacy e2e floor still has 8 failures; see Findings. |
+| frontend_playwright | `npx playwright test` | 40 | 0 | Full e2e floor now green (was 32/8). Root cause of the portfolio/shariah cluster was the shared backend `/portfolio/state` blob clobbering each test's seed via `PortfolioSync` — fixed with a per-test `isolatePortfolioState` route mock; stale-copy/locator/data-dependent assertions corrected; `retries: 1` added for transient real-data races. |
 
 ## 7. Findings
 
@@ -115,24 +116,23 @@ Determinism: pass. Two midterm screen runs over the frozen snapshot produced byt
 | F-012 | Validation read-only guard wrongly treated the live yfinance EOD cache (`prices/parquet/`) as frozen, so a teardown error fired every isolated run. | defect (fixed) | minor | The guard now scopes to frozen *reference* data only and excludes volatile recomputed caches; isolated validation run is clean. Underlying parquet churn is the live cache's wall-clock `source_as_of` stamp — it does not affect screen output (determinism test passes). | validation harness |
 | F-013 | New `tiered` gate-mode (Decision 7) is a production scope addition; default stays `hard` so live behavior is unchanged, but the branch was untested. Also, the strict-pass (hard) set is NOT a subset of the more-permissive tiered set. | defect | minor | Now covered by `test_midterm_gate_mode.py` (default-is-hard, tiered runs + admits ≥ hard + still proximity-bound, tiered determinism). The hard⊄tiered surprise is the soft re-rank + per-sector cap displacing a strict passer; flagged for operator decision (is that intended for tiered?), not auto-fixed. | midterm strategy / gate mode |
 | F-003 | Survivorship-bias check remains failed for the Stooq backtest. | data_tier_limitation | - | Free Stooq history has no delisted tickers; caveat is visible and explicitly overridden by operator choice. | backtest |
-| F-004 | Full Playwright chart test has a strict-mode locator collision on `Limitations`. | defect | minor | Two visible elements match the text; the validation surface itself is rendered. | frontend e2e |
-| F-005 | Candidate add-to-portfolio fixture expects ABC but observes live WYY local state. | defect | minor | Existing e2e fixture/localStorage isolation is brittle under the full parallel suite. | frontend e2e |
-| F-006 | Shariah user-inclusion badge is not found in one full-suite e2e path. | defect | minor | Backend Shariah endpoints pass; failure is isolated to the browser assertion path. | frontend e2e |
-| F-007 | Portfolio excluded-by-user badge is not found in one full-suite e2e path. | defect | minor | Backend status supports excluded_by_user; full-suite browser state did not render the expected badge. | frontend e2e |
-| F-008 | Earnings exclusion e2e expected `0 matches` but live snapshot did not reach that text. | defect | minor | The test is tied to current real-data event timing; needs a fixture or adjusted expectation. | frontend e2e |
-| F-009 | Portfolio CRUD e2e did not start from empty local state. | defect | minor | Full-suite browser state isolation is leaky for this spec. | frontend e2e |
-| F-010 | Candidate cap-breach e2e did not render the expected breach message. | defect | minor | Dedicated backend sizing assertion passes; browser scenario needs fixture hardening. | frontend e2e |
-| F-011 | Regime e2e expects label `Breadth above SMA 200`, which is absent in current UI copy. | defect | minor | Regime API and panel render; the e2e copy assertion is stale. | frontend e2e |
+| F-004 | Playwright chart test strict-mode locator collision on `Limitations`. | defect (fixed) | minor | Used `.first()`; the panel renders. | frontend e2e |
+| F-005 | Candidate add-to-portfolio seed clobbered by shared server state. | defect (fixed) | minor | Root cause: `PortfolioSync` hydrates from the shared backend `/portfolio/state` blob, overwriting the localStorage seed. Fixed by `isolatePortfolioState` route mock (per-test). | frontend e2e |
+| F-006 | Shariah user-inclusion badge not found. | defect (fixed) | minor | Same shared-state clobber dropped the inclusion setting; fixed by `isolatePortfolioState`. | frontend e2e |
+| F-007 | Portfolio excluded-by-user badge not found. | defect (fixed) | minor | Same shared-state clobber; fixed by `isolatePortfolioState`. | frontend e2e |
+| F-008 | Earnings exclusion e2e asserted exactly `0 matches`. | defect (fixed) | minor | The badge has no upper bound, so 0 was an over-assumption. Re-expressed as the true invariant: no surviving earnings badge reads < the 90-day exclusion window. | frontend e2e |
+| F-009 | Portfolio CRUD e2e did not start from empty local state. | defect (fixed) | minor | Same shared-state clobber; fixed by `isolatePortfolioState` so the empty-state test starts clean. | frontend e2e |
+| F-010 | Candidate cap-breach e2e asserted a non-existent "Cannot size without breaching cap" banner. | defect (fixed) | minor | The UI surfaces a breach as "Caps respected → No"; assertion corrected. | frontend e2e |
+| F-011 | Regime e2e matched `Breadth above SMA 200` as one text node. | defect (fixed) | minor | The label is split across `<Abbr>` tooltip wrappers; matched the `<dt>` (role=term) by substring instead. | frontend e2e |
 
 ## 8. Verdict & Recommended Actions
 
-Verdict: pass_with_defects. The app and strategy validation harness pass, backend contracts are green (119 passed, 0 xfailed), and all primary surfaces are reachable with provenance and disclaimer. The mid-term strategy — including all three declared modifications — is implemented correctly. No blocker, major, or backend/strategy defect remains; the only open items are frontend e2e test brittleness.
+Verdict: pass. The app and strategy validation harness pass, backend is green (119 passed, 0 xfailed), the full frontend e2e floor is green (40 passed, 0 failed), and all primary surfaces are reachable with provenance and disclaimer. The mid-term strategy — including all three declared modifications — is implemented correctly. No blocker, major, or minor defect remains open.
 
-Recommended actions (remaining):
+Recommended actions (remaining — none are defects):
 
-1. Harden the eight residual Playwright specs (F-004–F-011) with isolated localStorage/fixtures and less brittle text locators. Most share one root cause: leaky per-test browser-state isolation in the parallel suite.
-2. Keep survivorship caveat visible until a delisted-inclusive historical source is added (F-003, accepted data-tier limitation).
-3. Operator decision (F-013): confirm whether `tiered` mode intentionally allows a strict (hard) all-gate passer to be displaced out of the more-permissive tiered set by the soft re-rank + per-sector cap. Default `hard` is unaffected; the tiered branch is now test-covered.
+1. Operator decision (F-013): confirm whether `tiered` mode intentionally allows a strict (hard) all-gate passer to be displaced out of the more-permissive tiered set by the soft re-rank + per-sector cap. Default `hard` is unaffected; the tiered branch is now test-covered.
+2. Keep the survivorship caveat visible until a delisted-inclusive historical source is added (F-003, accepted data-tier limitation).
 
 **Resolved during this review:**
 

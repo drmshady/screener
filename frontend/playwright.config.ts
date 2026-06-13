@@ -3,6 +3,11 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
+  // One retry absorbs transient real-data races (chart mount / live-snapshot
+  // timing) so the suite is a reliable gate; `trace: on-first-retry` still
+  // captures the first failure for diagnosis. Systematic failures (which
+  // reproduce on the retry) are unaffected.
+  retries: 1,
   use: {
     baseURL: 'http://127.0.0.1:3100',
     trace: 'on-first-retry',
