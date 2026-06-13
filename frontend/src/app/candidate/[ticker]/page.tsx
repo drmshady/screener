@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { Abbr } from '@/components/Abbr';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidatePriceChart } from '@/components/ChartPanels';
+import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
 import { ShariahBadge } from '@/components/ShariahBadge';
 import { eventTerm } from '@/lib/events';
 import { formatMoney } from '@/lib/format';
@@ -56,6 +57,13 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
     if (settings.shariah_user_exclusion.length) {
       query.set('exclude', settings.shariah_user_exclusion.map((entry) => entry.ticker).join(','));
     }
+    // Scope the detail re-run to the strategy + sector-gate toggle the screen used,
+    // so the gate breakdown matches the screen (forwarded via the candidate link).
+    const fromScreen = new URLSearchParams(window.location.search);
+    const scopedStrategy = fromScreen.get('strategy');
+    const sectorFraction = fromScreen.get('sector');
+    if (scopedStrategy) query.set('strategy', scopedStrategy);
+    if (sectorFraction) query.set('sector_strength_top_fraction', sectorFraction);
     const queryText = query.toString();
     setDetail(null);
     setDetailError(null);
@@ -270,6 +278,9 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                 >
                   {addingPortfolio[sizingKey] ? 'Adding...' : 'Add to portfolio'}
                 </button>
+                {(match.strategy_slug ?? 'midterm_52w_high_momentum') === 'midterm_52w_high_momentum' ? (
+                  <CopyAdvisorPrompt ticker={detail.ticker} asOf={detail.data_as_of?.slice(0, 10)} />
+                ) : null}
               </div>
               {sizingState?.error ? (
                 <div className="mt-3 border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">{sizingState.error}</div>

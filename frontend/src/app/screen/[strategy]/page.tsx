@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from 'react';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidateRow } from '@/components/CandidateRow';
+import { CopyScreenAdvisorPrompt } from '@/components/CopyScreenAdvisorPrompt';
 import { EquityCurveCharts } from '@/components/ChartPanels';
 import { StrategyGatesPanel } from '@/components/StrategyGatesPanel';
 import { WalkForwardMetricsPanel } from '@/components/WalkForwardMetricsPanel';
@@ -38,6 +39,9 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
   const [showAllMatches, setShowAllMatches] = useState(false);
   const [excludeEarningsOverride, setExcludeEarningsOverride] = useState<boolean | null>(null);
   const [earningsWindowOverride, setEarningsWindowOverride] = useState<number | null>(null);
+  // Sector-strength (industry-momentum) gate: off by default (lost the A/B on
+  // returns); when on, keep only names in the top half of sectors by breadth.
+  const [sectorGateOn, setSectorGateOn] = useState(false);
   const settings = useAppStore((state) => state.settings);
 
   useEffect(() => {
@@ -48,36 +52,43 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
       .catch(() => setEquityCurve(null));
   }, [strategySlug]);
 
+  function buildRequestBody() {
+    const configuredEarningsWindow =
+      settings.exclude_earnings_within_days_overrides[strategySlug] ??
+      strategy?.default_exclude_earnings_within_days ??
+      0;
+    const effectiveEarningsWindow = earningsWindowOverride ?? configuredEarningsWindow;
+    const effectiveExcludeEarnings = excludeEarningsOverride ?? configuredEarningsWindow > 0;
+    const isSaudi = market === 'SA';
+    // 1.0 disables the sector-strength gate; 0.5 keeps the top half of sectors.
+    const sectorFraction = sectorGateOn ? 0.5 : 1.0;
+    return {
+      parameters: isSaudi
+        ? { market: 'SA', sector_strength_top_fraction: sectorFraction }
+        : {
+            liquidity_min_avg_dollar_volume_20d: settings.liquidity_min_avg_dollar_volume_20d,
+            liquidity_min_price: settings.liquidity_min_price,
+            sector_strength_top_fraction: sectorFraction,
+          },
+      filters: {
+        // Saudi compliance data is test-only, so don't apply the Shariah gate there.
+        shariah_only: !isSaudi && settings.shariah_filter_on && !showAllMatches,
+        exclude_earnings_within_days: effectiveExcludeEarnings ? effectiveEarningsWindow : 0,
+      },
+      shariah_overrides: {
+        active_sources: settings.shariah_external_sources,
+        inclusion: settings.shariah_user_inclusion,
+        exclusion: settings.shariah_user_exclusion,
+      },
+    };
+  }
+
   async function handleRun() {
     setLoading(true);
     try {
-      const configuredEarningsWindow =
-        settings.exclude_earnings_within_days_overrides[strategySlug] ??
-        strategy?.default_exclude_earnings_within_days ??
-        0;
-      const effectiveEarningsWindow = earningsWindowOverride ?? configuredEarningsWindow;
-      const effectiveExcludeEarnings = excludeEarningsOverride ?? configuredEarningsWindow > 0;
-      const isSaudi = market === 'SA';
       const result = await fetchApi(`/strategies/${strategySlug}/run`, ScreenResultSchema, {
         method: 'POST',
-        body: JSON.stringify({
-          parameters: isSaudi
-            ? { market: 'SA' } // backend injects the Saudi universe + SAR thresholds
-            : {
-                liquidity_min_avg_dollar_volume_20d: settings.liquidity_min_avg_dollar_volume_20d,
-                liquidity_min_price: settings.liquidity_min_price,
-              },
-          filters: {
-            // Saudi compliance data is test-only, so don't apply the Shariah gate there.
-            shariah_only: !isSaudi && settings.shariah_filter_on && !showAllMatches,
-            exclude_earnings_within_days: effectiveExcludeEarnings ? effectiveEarningsWindow : 0,
-          },
-          shariah_overrides: {
-            active_sources: settings.shariah_external_sources,
-            inclusion: settings.shariah_user_inclusion,
-            exclusion: settings.shariah_user_exclusion,
-          },
-        }),
+        body: JSON.stringify(buildRequestBody()),
       });
       setScreenResult(result);
       // Cache so navigating into a candidate detail and back doesn't re-run.
@@ -213,6 +224,23 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
         />
       </section>
 
+      <section className="panel flex flex-col gap-1 p-4 text-sm text-slate-700">
+        <label className="inline-flex items-center gap-2">
+          <input
+            checked={sectorGateOn}
+            className="h-4 w-4"
+            onChange={(event) => setSectorGateOn(event.target.checked)}
+            type="checkbox"
+          />
+          <span className="font-medium text-slate-900">Sector-strength gate (industry momentum)</span>
+        </label>
+        <p className="text-xs text-slate-500 sm:pl-6">
+          {sectorGateOn
+            ? 'On: keep only names in the top half of sectors by breadth (lower drawdown, fewer candidates).'
+            : 'Off (default): the gate lost the A/B on returns, so it is disabled. Turn on to filter to leading sectors.'}
+        </p>
+      </section>
+
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
         <StrategyGatesPanel strategy={strategy} />
         <WalkForwardMetricsPanel backtest={backtest} />
@@ -245,7 +273,12 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
                 {screenResult.candidate_count} matches for {screenResult.as_of_date}
               </p>
             </div>
-            <AsOfBadge date={screenResult.data_as_of} />
+            <div className="flex flex-col items-stretch gap-2 sm:items-end">
+              <AsOfBadge date={screenResult.data_as_of} />
+              {strategySlug === 'midterm_52w_high_momentum' && screenResult.candidates.length > 0 ? (
+                <CopyScreenAdvisorPrompt slug={strategySlug} getRequestBody={buildRequestBody} disabled={loading} />
+              ) : null}
+            </div>
           </div>
           {screenResult.stale_sources?.length ? (
             <div className="border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -280,7 +313,13 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
               </thead>
               <tbody>
                 {screenResult.candidates.map((candidate) => (
-                  <CandidateRow candidate={candidate} key={candidate.ticker} strategySlug={strategySlug} timeframe={strategy.timeframe} />
+                  <CandidateRow
+                    candidate={candidate}
+                    key={candidate.ticker}
+                    strategySlug={strategySlug}
+                    timeframe={strategy.timeframe}
+                    sectorTopFraction={sectorGateOn ? 0.5 : 1.0}
+                  />
                 ))}
               </tbody>
             </table>

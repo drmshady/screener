@@ -14,6 +14,7 @@ from ..screening.engine import (
     DEFAULT_SCREEN_TICKERS,
     _compliant_universe,
     clear_snapshot_caches,
+    refresh_reference_thresholds,
 )
 from ..shariah.lookup import normalize_shariah_overrides
 
@@ -110,6 +111,14 @@ def refresh_data(req: DataRefreshRequest) -> DataRefreshResponse:
         save_prices(fetched)
     manifest_latest = _update_prices_manifest(names)
     clear_snapshot_caches()
+
+    # Recompute the fixed reference-universe thresholds for the cross-sectional
+    # gates so a name's GP/asset-growth verdict stays stable across the screen and
+    # single-ticker analysis on the fresh data. Best-effort: never fail the refresh.
+    try:
+        refresh_reference_thresholds()
+    except Exception:
+        pass
 
     last_dates = load_last_dates(names)
     latest_bar = max((d.isoformat() for d in last_dates.values()), default=manifest_latest)

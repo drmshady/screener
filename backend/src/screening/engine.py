@@ -782,6 +782,57 @@ def _compliant_universe(normalized_overrides: dict[str, Any]) -> list[str]:
     return sorted(_drop_foreign_otc_noise(external) | inclusion)
 
 
+REFERENCE_SHARIAH_SOURCES = [
+    "spus_holdings",
+    "spwo_holdings",
+    "spre_holdings",
+    "spte_holdings",
+    "halal_terminal",
+]
+
+
+def refresh_reference_thresholds(as_of_date: str | None = None) -> dict:
+    """Compute + cache the gross-profitability / asset-growth percentile thresholds
+    over the COMPLIANT (Shariah) universe — the set actually screened — so the
+    cross-sectional gates grade each name against its investable peer group, not
+    the whole market (which skews lower-growth and unfairly fails compliant names).
+    Using a single cached cut also keeps a name's verdict consistent across the
+    screen, single-ticker analysis, and the candidate detail page. Refreshed
+    alongside prices; read by the strategy's _apply_cross_sectional_gates."""
+    from ..strategies._helpers.reference_thresholds import (
+        compute_thresholds,
+        save_reference_thresholds,
+    )
+    from ..strategies.midterm_52w_high_momentum import PARAMETERS
+
+    overrides = normalize_shariah_overrides(
+        {"active_sources": REFERENCE_SHARIAH_SOURCES}
+    )
+    tickers = _compliant_universe(overrides)
+    if tickers:
+        universe, data_as_of = build_universe_snapshot_stooq(tickers, as_of_date=as_of_date)
+    else:
+        universe, data_as_of = build_universe_snapshot(
+            DEFAULT_SCREEN_TICKERS, as_of_date=as_of_date
+        )
+    gp_pct = float(PARAMETERS["min_gp_assets_percentile"].default)
+    ag_pct = float(PARAMETERS["max_asset_growth_percentile"].default)
+    gp_threshold, ag_threshold = compute_thresholds(universe, gp_pct, ag_pct)
+    return save_reference_thresholds(
+        gp_threshold, ag_threshold, universe_size=int(len(universe)), as_of=data_as_of
+    )
+
+
+def _opt_float(value: Any) -> float | None:
+    """Coerce a DataFrame cell to a plain float, or None when missing/NaN."""
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def run_strategy(
     strategy_slug: str,
     parameters: dict[str, Any] | None = None,
@@ -906,6 +957,12 @@ def run_strategy(
                     f"fundamentals missing for {missing_fund}/{len(universe)} names"
                     " in the screened universe (those names cannot pass the quality gate)"
                 )
+        # Per-run sector-strength gate toggle (UI option): forward the requested
+        # fraction to the strategy via attrs (1.0 = off; 0<f<1 = keep top f sectors).
+        if parameters_snapshot.get("sector_strength_top_fraction") is not None:
+            universe.attrs["sector_strength_top_fraction"] = parameters_snapshot[
+                "sector_strength_top_fraction"
+            ]
         results = strategy.rules(universe)
         data_notes.extend(results.attrs.get("gates_skipped", []))
         if not results.empty and {"score", "ticker"}.issubset(results.columns):
@@ -1028,6 +1085,14 @@ def run_strategy(
                 rank=rank,
                 score=round(float(row.score), 6),
                 reason=row.reason,
+                return_12_1=_opt_float(getattr(row, "return_12_1", None)),
+                vol_scalar=_opt_float(getattr(row, "vol_scalar", None)),
+                dist_to_high=_opt_float(getattr(row, "dist_to_high", None)),
+                atr=_opt_float(getattr(row, "atr", None)),
+                debt_to_equity=_opt_float(getattr(row, "debt_to_equity", None)),
+                fcf_ttm=_opt_float(getattr(row, "fcf_ttm", None)),
+                gp_to_assets=_opt_float(getattr(row, "gp_to_assets", None)),
+                asset_growth=_opt_float(getattr(row, "asset_growth", None)),
                 gate_results=getattr(row, "gate_results", None) or [],
                 warnings=list(getattr(row, "warnings", None) or []),
                 shariah_compliant=(

@@ -21,10 +21,12 @@ export function CandidateRow({
   candidate,
   strategySlug,
   timeframe,
+  sectorTopFraction,
 }: {
   candidate: Candidate;
   strategySlug: string;
   timeframe?: string;
+  sectorTopFraction?: number;
 }) {
   const saveCandidate = useAppStore((state) => state.saveCandidate);
   const addHolding = useAppStore((state) => state.addHolding);
@@ -33,6 +35,13 @@ export function CandidateRow({
   const [adding, setAdding] = useState(false);
   const rowTimeframe = timeframe || candidate.timeframe;
   const distance = stopDistance(candidate.entry, candidate.stop_loss);
+  // Carry the screen's strategy + sector-gate toggle into the detail page so its
+  // gate breakdown matches what was screened (not a default re-run).
+  const detailQuery = new URLSearchParams({ strategy: strategySlug });
+  if (sectorTopFraction !== undefined) {
+    detailQuery.set('sector', String(sectorTopFraction));
+  }
+  const detailHref = `/candidate/${candidate.ticker}?${detailQuery.toString()}`;
 
   async function addToPortfolio() {
     setAdding(true);
@@ -75,7 +84,7 @@ export function CandidateRow({
   return (
     <tr className="border-b border-slate-200 last:border-b-0 hover:bg-slate-50">
       <td className="px-4 py-3">
-        <Link className="font-semibold text-slate-950 underline-offset-2 hover:underline" href={`/candidate/${candidate.ticker}`}>
+        <Link className="font-semibold text-slate-950 underline-offset-2 hover:underline" href={detailHref}>
           {candidate.ticker}
         </Link>
         <div className="text-xs text-slate-500">{candidate.name}</div>

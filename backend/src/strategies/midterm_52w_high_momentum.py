@@ -6,6 +6,7 @@ import pandas as pd
 
 from ..models.strategy import BacktestSummary, Modification, Strategy, StrategyParameter
 from ._helpers.quality import gross_profitability_mask, passes_quality_screen
+from ._helpers.reference_thresholds import load_reference_thresholds
 from ._helpers.sector_rank import rank_within_sector
 from ._helpers.vol_scaling import calculate_volatility_scalar
 from ._registry import registry
@@ -530,6 +531,62 @@ def _strong_sectors_by_breadth(df: pd.DataFrame, top_fraction: float) -> set[str
     return set(breadth.head(keep_n).index)
 
 
+def _sector_top_fraction(df: pd.DataFrame) -> float:
+    """Sector-strength gate fraction: a per-run override passed via ``df.attrs``
+    (so the UI can toggle the gate without changing the parameter default), else
+    the parameter default. 1.0 disables the gate; 0 < f < 1 keeps the top f of
+    sectors by breadth."""
+    override = df.attrs.get("sector_strength_top_fraction") if hasattr(df, "attrs") else None
+    if override is None:
+        return float(PARAMETERS["sector_strength_top_fraction"].default)
+    try:
+        return float(override)
+    except (TypeError, ValueError):
+        return float(PARAMETERS["sector_strength_top_fraction"].default)
+
+
+def _apply_cross_sectional_gates(df: pd.DataFrame) -> dict:
+    """Set ``df['_gp_pass']`` (gross profitability) and ``df['_ag_pass']`` (low
+    asset growth). Prefers FIXED reference-universe thresholds when cached, so a
+    name's verdict doesn't flip with the screened slice (Shariah on/off, universe
+    size); otherwise falls back to the contemporaneous-universe quantile. Returns
+    a dict describing what ran, for honest gate accounting. Mutates ``df``."""
+    ref = load_reference_thresholds()
+    gp_pct = PARAMETERS["min_gp_assets_percentile"].default
+    ag_top = PARAMETERS["max_asset_growth_percentile"].default
+
+    # Gross profitability: keep names at/above the cut; missing GP fails closed.
+    gp_applied = "gp_to_assets" in df.columns and df["gp_to_assets"].notna().any()
+    gp_ref = bool(ref and ref.get("gp_threshold") is not None)
+    if gp_applied and gp_ref:
+        df["_gp_pass"] = df["gp_to_assets"].notna() & (df["gp_to_assets"] >= ref["gp_threshold"])
+    elif gp_applied:
+        df["_gp_pass"] = gross_profitability_mask(df["gp_to_assets"], gp_pct)
+    else:
+        df["_gp_pass"] = True
+
+    # Low asset growth: keep names at/below the cut; missing AG fails OPEN.
+    ag_applied = (
+        ag_top < 1.0 and "asset_growth" in df.columns and df["asset_growth"].notna().any()
+    )
+    ag_ref = bool(ref and ref.get("ag_threshold") is not None)
+    if ag_applied:
+        threshold = ref["ag_threshold"] if ag_ref else df["asset_growth"].dropna().quantile(ag_top)
+        df["_ag_pass"] = df["asset_growth"].isna() | (df["asset_growth"] <= threshold)
+    else:
+        df["_ag_pass"] = True
+
+    return {
+        "gp_applied": gp_applied,
+        "ag_applied": ag_applied,
+        "gp_ref": gp_ref and gp_applied,
+        "ag_ref": ag_ref and ag_applied,
+        "n_missing_ag": int(df["asset_growth"].isna().sum()) if "asset_growth" in df.columns else 0,
+        "ag_disabled": ag_top >= 1.0,
+        "ref_as_of": ref.get("as_of") if ref else None,
+    }
+
+
 def prepare_universe_gates(
     df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, set[str] | None, bool, bool]:
@@ -544,32 +601,14 @@ def prepare_universe_gates(
     """
     df = df.copy()
 
-    gp_applied = "gp_to_assets" in df.columns and df["gp_to_assets"].notna().any()
-    if gp_applied:
-        df["_gp_pass"] = gross_profitability_mask(
-            df["gp_to_assets"], PARAMETERS["min_gp_assets_percentile"].default
-        )
-    else:
-        df["_gp_pass"] = True
-
-    ag_top = PARAMETERS["max_asset_growth_percentile"].default
-    ag_applied = (
-        ag_top < 1.0
-        and "asset_growth" in df.columns
-        and df["asset_growth"].notna().any()
-    )
-    if ag_applied:
-        ag_threshold = df["asset_growth"].dropna().quantile(ag_top)
-        df["_ag_pass"] = df["asset_growth"].isna() | (df["asset_growth"] <= ag_threshold)
-    else:
-        df["_ag_pass"] = True
+    info = _apply_cross_sectional_gates(df)
+    gp_applied = info["gp_applied"]
+    ag_applied = info["ag_applied"]
 
     if "52w_high" in df.columns and "close" in df.columns:
         df["dist_to_high"] = (df["52w_high"] - df["close"]) / df["close"]
 
-    strong_sectors = _strong_sectors_by_breadth(
-        df, PARAMETERS["sector_strength_top_fraction"].default
-    )
+    strong_sectors = _strong_sectors_by_breadth(df, _sector_top_fraction(df))
 
     return df, strong_sectors, gp_applied, ag_applied
 
@@ -598,46 +637,31 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         frame.attrs["gates_skipped"] = list(gates_skipped)
         return frame
 
-    # Cross-sectional gross-profitability gate is computed over the full universe
-    # so "top half" means top half of the screened universe, not of the survivors.
-    if "gp_to_assets" in df.columns and df["gp_to_assets"].notna().any():
-        df["_gp_pass"] = gross_profitability_mask(
-            df["gp_to_assets"], PARAMETERS["min_gp_assets_percentile"].default
-        )
-        gates_applied.append("top-half gross profitability")
+    # Cross-sectional gross-profitability (Novy-Marx) + low asset-growth
+    # (George-Hwang-Li q-theory) gates. Thresholds come from a FIXED reference
+    # universe when cached (so a name's verdict doesn't flip with the screened
+    # slice — Shariah on/off, universe size); otherwise from this universe's own
+    # quantile. See _apply_cross_sectional_gates / reference_thresholds.
+    xs = _apply_cross_sectional_gates(df)
+    ref_tag = " (vs reference universe)"
+    if xs["gp_applied"]:
+        gates_applied.append("top-half gross profitability" + (ref_tag if xs["gp_ref"] else ""))
     else:
-        df["_gp_pass"] = True
         gates_skipped.append(
             "gross-profitability gate skipped: gp_to_assets unavailable for this universe"
         )
-
-    # Cross-sectional LOW asset-growth gate (George-Hwang-Li q-theory): keep only
-    # the bottom fraction of the universe by YoY asset growth. Fails OPEN per name
-    # (missing asset_growth still passes) since point-in-time asset growth is sparse.
-    ag_top = PARAMETERS["max_asset_growth_percentile"].default
-    if (
-        ag_top < 1.0
-        and "asset_growth" in df.columns
-        and df["asset_growth"].notna().any()
-    ):
-        ag_valid = df["asset_growth"].dropna()
-        ag_threshold = ag_valid.quantile(ag_top)
-        df["_ag_pass"] = df["asset_growth"].isna() | (
-            df["asset_growth"] <= ag_threshold
-        )
-        gates_applied.append("low asset growth")
-        n_missing_ag = int(df["asset_growth"].isna().sum())
-        if n_missing_ag:
+    if xs["ag_applied"]:
+        gates_applied.append("low asset growth" + (ref_tag if xs["ag_ref"] else ""))
+        if xs["n_missing_ag"]:
             gates_skipped.append(
-                f"asset-growth gate passed-through for {n_missing_ag} name(s) missing"
+                f"asset-growth gate passed-through for {xs['n_missing_ag']} name(s) missing"
                 " point-in-time asset growth (fails open)"
             )
     else:
-        df["_ag_pass"] = True
         gates_skipped.append(
-            "asset-growth gate skipped: asset_growth unavailable for this universe"
-            if ag_top < 1.0
-            else "asset-growth gate disabled (max_asset_growth_percentile=1.0)"
+            "asset-growth gate disabled (max_asset_growth_percentile=1.0)"
+            if xs["ag_disabled"]
+            else "asset-growth gate skipped: asset_growth unavailable for this universe"
         )
 
     # 1. 52-week high proximity
@@ -648,9 +672,7 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
     # Replaces the old median-distance-to-high metric, which was dominated by each
     # sector's far-from-high majority and excluded near-high names in broadly-weak
     # sectors. Skipped (fail-open) when sector coverage is too thin or disabled.
-    strong_sectors = _strong_sectors_by_breadth(
-        df, PARAMETERS["sector_strength_top_fraction"].default
-    )
+    strong_sectors = _strong_sectors_by_breadth(df, _sector_top_fraction(df))
     if strong_sectors is not None:
         gates_applied.append("leading sector")
     else:
@@ -827,8 +849,8 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         matched,
         strong_sectors=strong_sectors,
         vol_col=vol_col,
-        gp_applied="top-half gross profitability" in gates_applied,
-        ag_applied="low asset growth" in gates_applied,
+        gp_applied=xs["gp_applied"],
+        ag_applied=xs["ag_applied"],
     )
     matched["gate_results"] = [evaluate(r, gate_context) for _, r in matched.iterrows()]
     # Decision 7: per-row warnings (soft gates the name failed). In tiered mode a

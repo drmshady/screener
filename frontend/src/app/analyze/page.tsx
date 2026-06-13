@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Abbr } from '@/components/Abbr';
 import { AsOfBadge } from '@/components/AsOfBadge';
+import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
 import {
   AnalyzeResponse,
   AnalyzeResponseSchema,
@@ -46,15 +47,13 @@ export default function AnalyzePage() {
       .catch(() => setStrategies([]));
   }, []);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const symbol = ticker.trim().toUpperCase();
+  const runAnalysis = useCallback(async (symbol: string, strategySlug: string) => {
     if (!symbol) return;
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      const query = new URLSearchParams({ strategy });
+      const query = new URLSearchParams({ strategy: strategySlug });
       const response = await fetchApi(`/analyze/${encodeURIComponent(symbol)}?${query.toString()}`, AnalyzeResponseSchema);
       setResult(response);
     } catch {
@@ -62,6 +61,22 @@ export default function AnalyzePage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Pre-fill + auto-run when arriving with ?ticker=... (e.g. from the watchlist).
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('ticker');
+    if (!param) return;
+    const symbol = param.trim().toUpperCase();
+    setTicker(symbol);
+    runAnalysis(symbol, strategy);
+    // Run once on mount; strategy defaults to the mid-term slug.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    runAnalysis(ticker.trim().toUpperCase(), strategy);
   }
 
   return (
@@ -169,6 +184,9 @@ export default function AnalyzePage() {
                     ))}
                   </ul>
                 </div>
+              ) : null}
+              {strategy === 'midterm_52w_high_momentum' ? (
+                <CopyAdvisorPrompt ticker={result.ticker} asOf={result.as_of} />
               ) : null}
             </section>
 

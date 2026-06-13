@@ -20,6 +20,7 @@ from backend.src.backtests.bias_check import build_bias_check, to_markdown
 from backend.src.backtests.metrics import summarize_portfolio, yearly_metric
 from backend.src.data.fundamentals import FundamentalsLoader
 from backend.src.data.prices import YFinancePriceProvider
+from backend.src.data.profiles import load_cached_profiles
 from backend.src.data.sectors import SectorMapper
 from backend.src.data.stooq_history import StooqHistoricalProvider
 from backend.src.indicators.momentum import calculate_12_1_return
@@ -390,6 +391,25 @@ def run_backtest(
     else:
         facts = {}
         sectors = {ticker: "Unclassified" for ticker in union}
+
+    # Overlay the live (current) yfinance sector cache as a STATIC sector map.
+    # EDGAR companyfacts carries no SIC, so the point-in-time sector source is
+    # empty (every name resolves to "Unclassified") and the sector-breadth gate
+    # could never run historically. A company's sector is near-static over time
+    # (unlike price), so using the current sector is a defensible approximation
+    # that lets the breadth gate be backtested. Only fills names left Unclassified.
+    cached_profiles, _ = load_cached_profiles(sorted(union))
+    overlaid = 0
+    for ticker, profile in cached_profiles.items():
+        sector = profile.get("sector")
+        if sector and sector != "Unclassified" and sectors.get(ticker, "Unclassified") == "Unclassified":
+            sectors[ticker] = sector
+            overlaid += 1
+    classified = sum(1 for s in sectors.values() if s and s != "Unclassified")
+    print(
+        f"Sectors: {classified}/{len(sectors)} classified "
+        f"({overlaid} filled from the live yfinance cache, static approximation)"
+    )
 
     # Pass 2: build snapshots, run the strategy, score forward returns.
     by_ticker = prices.groupby("ticker", sort=False)

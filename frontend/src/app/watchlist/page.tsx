@@ -1,5 +1,6 @@
 "use client";
 
+import Link from 'next/link';
 import { useAppStore } from '@/lib/store';
 
 function money(value: string) {
@@ -37,7 +38,13 @@ export default function WatchlistPage() {
               {watchlist.map((entry) => (
                 <tr className="border-t border-gray-200" key={entry.id}>
                   <td className="px-4 py-3">
-                    <div className="font-semibold text-gray-950">{entry.ticker}</div>
+                    <Link
+                      className="font-semibold text-gray-950 underline-offset-2 hover:underline"
+                      href={`/analyze?ticker=${encodeURIComponent(entry.ticker)}`}
+                      title={`Analyze ${entry.ticker}`}
+                    >
+                      {entry.ticker}
+                    </Link>
                     <div className="text-xs text-gray-500">{entry.name}</div>
                   </td>
                   <td className="px-4 py-3 text-gray-700">{entry.sector}</td>

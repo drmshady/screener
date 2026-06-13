@@ -136,6 +136,24 @@ export const AnalyzeResponseSchema = z.object({
   disclaimer: z.string(),
 });
 
+export const AdvisorPromptResponseSchema = z.object({
+  ticker: z.string(),
+  strategy: z.string(),
+  personal_use_directive: z.boolean(),
+  prompt: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export const ScreenAdvisorPromptResponseSchema = z.object({
+  strategy: z.string(),
+  candidate_count: z.number(),
+  personal_use_directive: z.boolean(),
+  prompt: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
 export const TickerEventSchema = z.object({
   ticker: z.string().nullable().optional(),
   event_type: z.string(),
@@ -481,5 +499,7 @@ export type SizingResponse = z.infer<typeof SizingResponseSchema>;
 export type PortfolioQuote = z.infer<typeof PortfolioQuoteSchema>;
 export type PortfolioQuotesResponse = z.infer<typeof PortfolioQuotesResponseSchema>;
 export type RegimeResponse = z.infer<typeof RegimeResponseSchema>;
+export type AdvisorPromptResponse = z.infer<typeof AdvisorPromptResponseSchema>;
+export type ScreenAdvisorPromptResponse = z.infer<typeof ScreenAdvisorPromptResponseSchema>;
 export type SourceMeta = z.infer<typeof SourceMetaSchema>;
 export type MetaResponse = z.infer<typeof MetaResponseSchema>;

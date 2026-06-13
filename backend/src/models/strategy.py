@@ -83,6 +83,16 @@ class Candidate(BaseModel):
     rank: int
     score: float
     reason: str
+    # Ranking inputs + diagnostics (so an advisor can rank/triage, not just see
+    # risk geometry). Optional: some are unavailable on the free data tier.
+    return_12_1: Optional[float] = None
+    vol_scalar: Optional[float] = None
+    dist_to_high: Optional[float] = None
+    atr: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    fcf_ttm: Optional[float] = None
+    gp_to_assets: Optional[float] = None
+    asset_growth: Optional[float] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     shariah_compliant: Optional[bool] = None
@@ -128,7 +138,33 @@ class AnalyzeResponse(BaseModel):
     stop_loss: str
     tighter_stop_loss: Optional[str] = None
     take_profit: str
+    return_12_1: Optional[float] = None
+    vol_scalar: Optional[float] = None
+    dist_to_high: Optional[float] = None
+    atr: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    fcf_ttm: Optional[float] = None
+    gp_to_assets: Optional[float] = None
+    asset_growth: Optional[float] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     data_notes: List[str] = Field(default_factory=list)
+    data_as_of: str
+    disclaimer: str
+
+
+class AdvisorPromptResponse(BaseModel):
+    ticker: str
+    strategy: str
+    personal_use_directive: bool
+    prompt: str
+    data_as_of: str
+    disclaimer: str
+
+
+class ScreenAdvisorPromptResponse(BaseModel):
+    strategy: str
+    candidate_count: int
+    personal_use_directive: bool
+    prompt: str
     data_as_of: str
     disclaimer: str

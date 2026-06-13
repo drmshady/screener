@@ -16,7 +16,17 @@ for (const route of ROUTES) {
     await page.goto(route);
     await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 
-    const bodyText = await page.evaluate(() => document.body.innerText);
+    // Feature 004 / FR-014: the advisor-prompt preview is the ONE place that may
+    // carry directive framing, and only in personal-use mode where it is marked
+    // with `data-personal-use-prompt`. Exclude exactly that element from the lint;
+    // the rest of the page (all app chrome) must stay directive-free.
+    const bodyText = await page.evaluate(() => {
+      const clone = document.body.cloneNode(true) as HTMLElement;
+      clone
+        .querySelectorAll('[data-personal-use-prompt]')
+        .forEach((el) => el.remove());
+      return clone.innerText;
+    });
     const forbiddenWords = [' Buy', ' Sell', 'Recommended', 'Strong buy'];
 
     for (const word of forbiddenWords) {

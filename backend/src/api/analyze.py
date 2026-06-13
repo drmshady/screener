@@ -6,10 +6,13 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from .. import strategies as _strategies  # noqa: F401 - registers strategies
+from ..agent.advisor_prompt import build_advisor_prompt, load_survivorship_status
 from ..data.fundamentals import FundamentalsLoader
 from ..data.saudi_universe import saudi_universe
 from ..lib.disclaimer import DISCLAIMER_TEXT
-from ..models.strategy import AnalyzeResponse
+from ..lib.flags import personal_use_directive
+from ..models.strategy import AdvisorPromptResponse, AnalyzeResponse
+from ..regime.calculator import current_regime_response
 from ..screening.engine import (
     _compliant_universe,
     build_single_ticker_snapshot,
@@ -21,6 +24,16 @@ from ..strategies import midterm_52w_high_momentum as midterm
 from ..strategies._registry import registry
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
+
+
+def _as_float(value) -> float | None:
+    """Coerce a snapshot cell to a plain float, or None when missing/NaN."""
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 _DEFAULT_SHARIAH_SOURCES = [
     "spus_holdings", "spwo_holdings", "spre_holdings", "spte_holdings", "halal_terminal",
@@ -60,12 +73,17 @@ def _overlay_edgar(snapshot: pd.DataFrame, symbol: str, as_of: str) -> None:
             snapshot.at[idx, key] = q.get(key)
 
 
-@router.get("/{ticker}", response_model=AnalyzeResponse)
-def analyze_ticker(
+def compute_candidate_result(
     ticker: str,
     strategy: str = "midterm_52w_high_momentum",
     as_of: str | None = None,
-):
+) -> AnalyzeResponse:
+    """Compute the single-ticker strategy result (gate results + levels).
+
+    Shared by GET /analyze/{ticker} and GET /analyze/{ticker}/advisor-prompt so
+    both surfaces use one computation path and report identical numbers. Raises
+    HTTPException (404/400) on the same conditions as the analyze endpoint.
+    """
     registered = registry.get(strategy)
     if registered is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -147,8 +165,63 @@ def analyze_ticker(
             else None
         ),
         take_profit=f"{float(levels['take_profit']):.2f}",
+        return_12_1=_as_float(row.get("return_12_1")),
+        vol_scalar=_as_float(row.get("vol_scalar")),
+        dist_to_high=_as_float(row.get("dist_to_high")),
+        atr=_as_float(row.get("atr")),
+        debt_to_equity=_as_float(row.get("debt_to_equity")),
+        fcf_ttm=_as_float(row.get("fcf_ttm")),
+        gp_to_assets=_as_float(row.get("gp_to_assets")),
+        asset_growth=_as_float(row.get("asset_growth")),
         gate_results=gate_results,
         data_notes=data_notes,
         data_as_of=data_as_of,
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.get("/{ticker}", response_model=AnalyzeResponse)
+def analyze_ticker(
+    ticker: str,
+    strategy: str = "midterm_52w_high_momentum",
+    as_of: str | None = None,
+):
+    return compute_candidate_result(ticker, strategy=strategy, as_of=as_of)
+
+
+def _current_regime_name(as_of: str | None) -> str | None:
+    """Best-effort current regime name for the prompt; None if unavailable.
+
+    Kept best-effort (never fatal) so the prompt still generates when regime
+    inputs are unavailable; the builder notes the absence.
+    """
+    try:
+        return str(current_regime_response(as_of_date=as_of).regime)
+    except Exception:
+        return None
+
+
+@router.get("/{ticker}/advisor-prompt", response_model=AdvisorPromptResponse)
+def advisor_prompt(
+    ticker: str,
+    strategy: str = "midterm_52w_high_momentum",
+    as_of: str | None = None,
+):
+    result = compute_candidate_result(ticker, strategy=strategy, as_of=as_of)
+    registered = registry.get(strategy)
+    directive = personal_use_directive()
+    prompt = build_advisor_prompt(
+        result,
+        registered,
+        survivorship=load_survivorship_status(),
+        regime=_current_regime_name(as_of),
+        directive=directive,
+    )
+    return AdvisorPromptResponse(
+        ticker=result.ticker,
+        strategy=strategy,
+        personal_use_directive=directive,
+        prompt=prompt,
+        data_as_of=result.data_as_of,
         disclaimer=DISCLAIMER_TEXT,
     )

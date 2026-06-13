@@ -100,19 +100,31 @@ def get_candidate(
     sources: str | None = Query(default=None),
     include: str | None = Query(default=None),
     exclude: str | None = Query(default=None),
+    strategy: str | None = Query(default=None),
+    sector_strength_top_fraction: float | None = Query(default=None),
 ):
     symbol = ticker.upper()
     is_saudi = symbol.endswith(".SR")
     matches = []
     data_as_of = None
-    for strategy in registry.list_all():
+    # Scope to the strategy the user screened (when provided) so the detail page
+    # reflects that screen instead of every registered strategy; otherwise show all.
+    strategies = (
+        [s for s in registry.list_all() if s.slug == strategy]
+        if strategy
+        else registry.list_all()
+    )
+    for strat in strategies:
         parameters: dict = {"refresh_events": False, "regime_gate": False}
         if is_saudi:
             # Saudi names live in the Tadawul universe, not the US screen — run the
             # Saudi market so the detail page shows the same full strategy match.
             parameters["market"] = "SA"
+        # Honor the screen's sector-strength gate toggle so its gate breakdown matches.
+        if sector_strength_top_fraction is not None:
+            parameters["sector_strength_top_fraction"] = sector_strength_top_fraction
         result = run_strategy(
-            strategy.slug,
+            strat.slug,
             parameters=parameters,
             filters={"exclude_earnings_within_days": 0},
         )

@@ -1,10 +1,36 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/002-app-strategy-validation/plan.md` (active feature 002), which builds
-on the 001 MVP described below.
+`specs/005-value-midterm-strategy/plan.md` (active feature 005), which builds
+on the 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 002-app-strategy-validation
+## Active feature: 005-value-midterm-strategy
+
+Add a second fully-gated **mid-term strategy** based on value:
+`midterm_value_composite`. It ranks the liquid universe by a multi-metric value
+composite (book/market, earnings, cash-flow, sales **yields**), gates value
+traps with a Piotroski (2000) F-Score, and ranks the composite **within sector**
+so financials/REITs aren't spuriously ranked. The genuinely new work is data +
+indicators: a point-in-time `value_metrics_as_of` EDGAR extension and two
+test-first indicator modules (`indicators/valuation.py`,
+`indicators/piotroski.py`). It reuses the momentum strategy's engine,
+reference-threshold cache, gate-accounting, level derivation, and backtest
+runner, and plugs into the 003 comparison + 004 advisor export. Ships disabled
+by default (Stooq survivorship still FAILS, surfaced honestly). Plan:
+`specs/005-value-midterm-strategy/plan.md`.
+
+## Prior feature: 004-advisor-prompt-export
+
+Add a "Copy advisor prompt" capability: for a mid-term candidate, assemble a
+self-contained, deterministic prompt (candidate gate results + price levels +
+regime + the live strategy declaration with citations + a mandatory honesty
+block driven by the backtest's real `bias_check`) that the user pastes into an
+external AI advisor. A backend builder is the single source of truth; directive
+framing is gated behind a personal-use flag (default off) and the Principle V
+amendment (constitution v1.1.0). Plan:
+`specs/004-advisor-prompt-export/plan.md`.
+
+## Prior feature: 002-app-strategy-validation
 
 Validate that the built screener works end-to-end and that the **mid-term
 strategy** (`midterm_52w_high_momentum`) behaves as its declared rules,

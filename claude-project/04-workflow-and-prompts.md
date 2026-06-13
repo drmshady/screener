@@ -4,6 +4,19 @@ The advisor is only as honest as the data you give it. Run the screener, copy
 the **computed** output, paste it in. Don't ask Claude to figure out a stock's
 numbers from memory — it can't, and it shouldn't pretend to.
 
+> **The app now builds this prompt for you.** On any candidate (the candidate
+> detail page or the Analyze page), click **"Copy advisor prompt"** — the app
+> assembles a complete, self-contained prompt (candidate gate results, levels,
+> regime, the full strategy context with citations, and the honesty/survivorship
+> caveats) and copies it to your clipboard. Paste it straight into this Project,
+> or even a fresh chat — it carries all the context itself, so Template A below
+> is now mostly a fallback for manual/what-if questions.
+>
+> Directive (take/pass/size) framing in the generated prompt is gated behind the
+> backend's personal-use flag `SCREENER_PERSONAL_USE_DIRECTIVE` (default **off** →
+> neutral framing). Turn it on only for your own single-user machine; never for a
+> shared or hosted instance (see [03-honesty-and-limitations.md](03-honesty-and-limitations.md)).
+
 ## What to gather before asking
 
 For a single-candidate question, copy from your screener / single-ticker
