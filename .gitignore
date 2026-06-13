@@ -1,0 +1,40 @@
+# Data & Caches (generated/downloaded locally by seed + ingest scripts; never committed)
+backend/data/
+backend/backtests/**/equity_curve.parquet
+backend/backtests/**/*.parquet
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Node/Frontend
+node_modules/
+.next/
+playwright-report/
+test-results/
+.eslintcache
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.local
+.env*
+
+# Stray nested data dir from a script run in the wrong cwd
+backend/backend/

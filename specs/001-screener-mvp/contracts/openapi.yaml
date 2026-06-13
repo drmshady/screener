@@ -1,0 +1,953 @@
+openapi: 3.1.0
+info:
+  title: US Stock Screener API
+  version: 0.1.0
+  description: |
+    Backend API for the US Stock Screener MVP (spec 001-screener-mvp).
+
+    Conventions:
+    - Every response that exposes user-visible data carries `data_as_of` and `disclaimer` fields per Constitution V.
+    - All monetary values are USD; serialized as strings to preserve decimal precision.
+    - All timestamps are ISO 8601 UTC.
+    - All endpoints are deterministic on a fixed data snapshot per Constitution III.
+
+servers:
+  - url: http://localhost:8000
+    description: Local dev
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  /meta:
+    get:
+      summary: Source provenance and as-of metadata
+      description: Returns the as-of timestamp and source name for every backing data source.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetaResponse' }
+
+  /strategies:
+    get:
+      summary: List all available strategies
+      parameters:
+        - { name: timeframe, in: query, required: false, schema: { type: string, enum: [Short-term, Mid-term] } }
+        - { name: enabled_only, in: query, required: false, schema: { type: boolean } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  strategies:
+                    type: array
+                    items: { $ref: '#/components/schemas/Strategy' }
+                  data_as_of: { type: string, format: date-time }
+                  disclaimer: { type: string }
+
+  /strategies/{slug}:
+    get:
+      summary: Get one strategy's metadata
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Strategy' }
+        '404':
+          description: Not found
+
+  /strategies/{slug}/backtest:
+    get:
+      summary: Walk-forward backtest metrics for one strategy
+      description: |
+        Returns per-year hit rate, max drawdown, win/loss stats, the data window used, and the data
+        sources behind the backtest. Powers the user-facing "Backtest performance" panel (FR-035).
+        Deterministic — the response is a static read of the most recent backtest snapshot for the
+        strategy. Reproducibility comes from Constitution III's backtest discipline.
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BacktestResponse' }
+        '404':
+          description: Strategy or backtest not found
+
+  /strategies/{slug}/backtest/equity-curve:
+    get:
+      summary: Step-based equity curve for one strategy backtest
+      description: |
+        Returns the committed equity_curve.parquet artifact for the strategy as JSON.
+        The artifact is deterministic and shares source/as-of metadata with the
+        backtest snapshot. Points are step-indexed because the committed artifact
+        stores observation number and equity, not trade dates.
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EquityCurveResponse' }
+        '404':
+          description: Strategy or backtest not found
+
+  /strategies/{slug}/run:
+    post:
+      summary: Run a strategy and return its ScreenResult
+      description: |
+        Deterministic on a fixed data snapshot — same parameters + filters + as_of_date produce the same id and candidate list.
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScreenRunRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreenResult' }
+        '400':
+          description: Bad parameters
+        '404':
+          description: Strategy not found
+
+  /candidates/{ticker}:
+    get:
+      summary: Per-ticker candidate detail (latest screen match across all strategies)
+      parameters:
+        - { name: ticker, in: path, required: true, schema: { type: string } }
+        - { name: sources, in: query, required: false, schema: { type: string }, description: Comma-separated active external source names. }
+        - { name: include, in: query, required: false, schema: { type: string }, description: Comma-separated user inclusion tickers. }
+        - { name: exclude, in: query, required: false, schema: { type: string }, description: Comma-separated user exclusion tickers. }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticker: { type: string }
+                  name: { type: string }
+                  sector: { type: string }
+                  current_price: { type: string }
+                  matches:
+                    type: array
+                    items: { $ref: '#/components/schemas/Candidate' }
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/TickerEvent' }
+                  shariah:
+                    $ref: '#/components/schemas/ShariahStatus'
+                  data_as_of: { type: string, format: date-time }
+                  disclaimer: { type: string }
+
+  /analyze/{ticker}:
+    get:
+      summary: On-demand single-symbol strategy analysis
+      description: |
+        Fetches one ticker on demand and evaluates row-level strategy gates without requiring
+        current universe membership. Cross-sectional gates that require a full universe are
+        reported as skipped.
+      parameters:
+        - { name: ticker, in: path, required: true, schema: { type: string } }
+        - { name: strategy, in: query, required: false, schema: { type: string, default: midterm_52w_high_momentum } }
+        - { name: as_of, in: query, required: false, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyzeResponse' }
+        '400':
+          description: Unsupported strategy for single-symbol analysis
+        '404':
+          description: Strategy or ticker data not found
+
+  /candidates/{ticker}/history:
+    get:
+      summary: Historical OHLCV-derived chart data for one ticker
+      description: |
+        Reads the same local price stores used by the screener and returns close,
+        52-week high, and 200-day SMA overlays for the candidate detail chart.
+      parameters:
+        - { name: ticker, in: path, required: true, schema: { type: string } }
+        - { name: days, in: query, required: false, schema: { type: integer, default: 400, minimum: 30, maximum: 800 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CandidateHistoryResponse' }
+        '404':
+          description: No local OHLCV history found for ticker
+
+  /regime:
+    get:
+      summary: Current market regime + per-strategy favorability
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegimeResponse' }
+
+  /events/market:
+    get:
+      summary: Scheduled US macroeconomic events for the displayed week
+      parameters:
+        - { name: days_ahead, in: query, required: false, schema: { type: integer, default: 7 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketEventsResponse' }
+
+  /events/ticker/{ticker}:
+    get:
+      summary: Per-ticker events (earnings + recent 8-Ks)
+      parameters:
+        - { name: ticker, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TickerEventsResponse' }
+
+  /shariah/status/{ticker}:
+    get:
+      summary: Is this ticker Shariah-compliant per the active source?
+      parameters:
+        - { name: ticker, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShariahStatus' }
+
+  /sizing:
+    post:
+      summary: Compute a position-sizing suggestion for a candidate against a hypothetical portfolio
+      description: |
+        The portfolio is supplied in the request body (the server is stateless; the client owns the user state).
+        The response is a deterministic function of the inputs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SizingRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SizingResponse' }
+        '400':
+          description: Bad input (e.g., negative capital)
+        '422':
+          description: Cannot size without breaching cap
+
+  /portfolio/quotes:
+    post:
+      summary: Refresh portfolio latest prices and strategy levels
+      description: |
+        The portfolio is supplied in the request body; the server stays stateless. Each holding gets
+        the latest on-demand price plus strategy-derived entry, stop, tighter stop, and target levels.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PortfolioQuotesRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortfolioQuotesResponse' }
+        '400':
+          description: Unsupported strategy for portfolio levels
+        '404':
+          description: Strategy not found
+
+  /portfolio/state:
+    get:
+      summary: Load the server-persisted portfolio/watchlist/settings blob
+      description: |
+        Single-user server-side persistence so the portfolio survives across browsers,
+        origins, and restarts (not just this browser's localStorage). `state` is null
+        when nothing has been saved yet. The blob is opaque — its shape is owned by the
+        frontend store.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortfolioStateEnvelope' }
+    put:
+      summary: Persist the portfolio/watchlist/settings blob
+      description: Last-write-wins (single user). Body wraps the opaque state under `state`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                state: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortfolioStateEnvelope' }
+
+  /data/refresh:
+    post:
+      summary: Manually pull latest prices for a market's screened universe
+      description: |
+        Fetches the latest bars for the chosen market's screened universe (US → the
+        compliant halal universe; SA → the Tadawul `.SR` universe) or an explicit
+        ticker list, persists them, updates the manifest so `/meta` shows the new date,
+        and clears snapshot caches so the next screen reflects fresh data. Bounded to
+        cap interactive cost.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                market: { type: string, enum: [US, SA], nullable: true }
+                tickers:
+                  type: array
+                  nullable: true
+                  items: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataRefreshResponse' }
+
+components:
+  schemas:
+    PortfolioStateEnvelope:
+      type: object
+      properties:
+        state:
+          type: object
+          nullable: true
+          additionalProperties: true
+        updated_at: { type: string, nullable: true }
+    DataRefreshResponse:
+      type: object
+      required: [refreshed_tickers, fetched_rows, capped, data_as_of, disclaimer]
+      properties:
+        refreshed_tickers: { type: integer }
+        fetched_rows: { type: integer }
+        latest_bar: { type: string, nullable: true, description: Newest bar date across the refreshed tickers. }
+        capped: { type: boolean, description: True if the universe exceeded the per-call cap and was truncated. }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+    MetaResponse:
+      type: object
+      properties:
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              source_name: { type: string }
+              kind: { type: string, enum: [prices, fundamentals, sectors, shariah, ticker_events, market_events] }
+              source_as_of: { type: string, format: date-time }
+              is_stale: { type: boolean }
+              refresh_interval_days: { type: integer }
+              source_url: { type: string, nullable: true }
+        disclaimer: { type: string }
+
+    Strategy:
+      type: object
+      required: [slug, name, timeframe, citation]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        timeframe: { type: string, enum: [Short-term, Mid-term] }
+        citation: { type: string }
+        description: { type: string }
+        holding_period_days:
+          type: object
+          properties:
+            min: { type: integer }
+            max: { type: integer }
+        parameters:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              default: {}
+              min: {}
+              max: {}
+              type: { type: string }
+              description: { type: string }
+        regime_favorability:
+          type: object
+          properties:
+            "Trending up": { type: string, enum: [Favorable, Neutral, Unfavorable] }
+            "Range-bound": { type: string, enum: [Favorable, Neutral, Unfavorable] }
+            "Trending down": { type: string, enum: [Favorable, Neutral, Unfavorable] }
+        default_exclude_earnings_within_days: { type: integer }
+        enabled_by_default: { type: boolean }
+        modifications:
+          type: array
+          description: Each documented modification to the cited core methodology, with its own citation. Powers the "Strategy gates" panel (FR-037).
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              description: { type: string }
+              citation: { type: string }
+        backtest_summary:
+          type: object
+          nullable: true
+          description: Headline metrics for the strategy's most recent walk-forward backtest. Null if no backtest has been run.
+          properties:
+            data_window_start: { type: string, format: date }
+            data_window_end: { type: string, format: date }
+            total_return: { type: number }
+            max_drawdown: { type: number }
+            hit_rate: { type: number }
+            avg_win: { type: number }
+            avg_loss: { type: number }
+            turnover: { type: number }
+            source_name: { type: string }
+            source_as_of: { type: string, format: date-time }
+        backtest_window_meets_v1_floor:
+          type: boolean
+          description: True iff window ≥ 15 years AND covers 2008-2009. Constitution III gate for enabled_by_default.
+
+    ScreenRunRequest:
+      type: object
+      properties:
+        parameters:
+          type: object
+          additionalProperties: true
+          description: Strategy-specific parameter overrides; missing keys use defaults.
+        filters:
+          type: object
+          properties:
+            shariah_only: { type: boolean, default: false }
+            exclude_earnings_within_days: { type: integer, nullable: true, description: "null → use strategy default" }
+        shariah_overrides:
+          type: object
+          description: |
+            Client-supplied user overrides combined with the active external Shariah source(s) per FR-040.
+            Server is stateless on user state; lists are stored in the browser and passed per request.
+          properties:
+            active_sources:
+              type: array
+              items: { type: string }
+              default: [spus_holdings]
+            inclusion:
+              type: array
+              items: { $ref: '#/components/schemas/UserShariahOverride' }
+            exclusion:
+              type: array
+              items: { $ref: '#/components/schemas/UserShariahOverride' }
+        as_of_date:
+          type: string
+          format: date
+          description: Optional override; defaults to the latest available data snapshot.
+
+    ScreenResult:
+      type: object
+      required: [id, strategy_slug, as_of_date, candidates, data_as_of, disclaimer]
+      properties:
+        id: { type: string, description: Deterministic hash of (strategy_slug, as_of_date, parameters, filters). }
+        strategy_slug: { type: string }
+        as_of_date: { type: string, format: date }
+        parameters_snapshot:
+          type: object
+          additionalProperties: true
+        filters_snapshot:
+          type: object
+          properties:
+            shariah_only: { type: boolean }
+            exclude_earnings_within_days: { type: integer }
+            shariah_active_sources:
+              type: array
+              items: { type: string }
+            shariah_user_inclusion:
+              type: array
+              items: { $ref: '#/components/schemas/UserShariahOverride' }
+            shariah_user_exclusion:
+              type: array
+              items: { $ref: '#/components/schemas/UserShariahOverride' }
+        candidate_count: { type: integer }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/Candidate' }
+        computed_at: { type: string, format: date-time }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+        stale_sources:
+          type: array
+          items: { type: string }
+          description: Source names whose data is older than their refresh interval.
+        data_notes:
+          type: array
+          items: { type: string }
+          description: >-
+            Honest data-completeness notes: strategy gates skipped because required
+            data was missing (fundamentals coverage, volume history, sector breadth)
+            and price-bar staleness warnings. Empty when every declared gate ran on
+            fresh data.
+
+    Candidate:
+      type: object
+      required: [ticker, name, sector, current_price, entry, stop_loss, take_profit, rank, reason]
+      properties:
+        ticker: { type: string }
+        name: { type: string }
+        sector: { type: string }
+        current_price: { type: string, description: USD decimal as string. }
+        entry: { type: string }
+        stop_loss: { type: string }
+        tighter_stop_loss:
+          type: string
+          nullable: true
+          description: Alternative tighter stop from the structure (20-day swing-low) method, shown beside the primary stop for comparison. Null when unavailable.
+        take_profit: { type: string }
+        rank: { type: integer, minimum: 1 }
+        score: { type: number }
+        reason: { type: string, description: One-line "why it matched". }
+        gate_results:
+          type: array
+          description: Per-gate breakdown for this candidate — every gate that ran (pass, with the actual value) and every gate skipped for missing data. A listed candidate passed all applied gates.
+          items:
+            type: object
+            properties:
+              gate: { type: string }
+              status: { type: string, enum: [pass, fail, skipped] }
+              detail: { type: string }
+        shariah_compliant:
+          type: boolean
+          nullable: true
+          description: Null when filter is OFF; true when filter is ON (false candidates are excluded).
+        shariah_source_kind:
+          type: string
+          nullable: true
+          enum: [external, user, excluded_by_user, not_listed]
+        shariah_external_source_name:
+          type: string
+          nullable: true
+        shariah_source_as_of:
+          type: string
+          format: date-time
+          nullable: true
+        shariah_source_url:
+          type: string
+          nullable: true
+        shariah_user_note:
+          type: string
+          nullable: true
+        shariah_is_stale:
+          type: boolean
+          nullable: true
+        next_earnings_date:
+          type: string
+          format: date
+          nullable: true
+        days_to_earnings:
+          type: integer
+          nullable: true
+        recent_8k_count_30d: { type: integer }
+        events_source_as_of:
+          type: string
+          format: date-time
+          nullable: true
+
+    AnalyzeResponse:
+      type: object
+      required: [ticker, strategy, as_of, would_be_selected, entry, stop_loss, take_profit, gate_results, data_as_of, disclaimer]
+      properties:
+        ticker: { type: string }
+        name: { type: string }
+        sector: { type: string }
+        strategy: { type: string }
+        as_of: { type: string, format: date }
+        would_be_selected:
+          type: boolean
+          description: True when no evaluated row-level gate failed; skipped universe-context gates do not count as failures.
+        current_price: { type: string }
+        entry: { type: string }
+        stop_loss: { type: string }
+        tighter_stop_loss:
+          type: string
+          nullable: true
+        take_profit: { type: string }
+        gate_results:
+          type: array
+          items:
+            type: object
+            properties:
+              gate: { type: string }
+              status: { type: string, enum: [pass, fail, skipped] }
+              detail: { type: string }
+        data_notes:
+          type: array
+          items: { type: string }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    RegimeResponse:
+      type: object
+      required: [regime, rule_summary, as_of_date, data_as_of, disclaimer]
+      properties:
+        regime: { type: string, enum: [Trending up, Range-bound, Trending down] }
+        rule_summary: { type: string }
+        inputs:
+          type: object
+          properties:
+            spy_close: { type: string, nullable: true }
+            spy_sma200: { type: string, nullable: true }
+            spy_above_sma200: { type: boolean, nullable: true }
+            breadth_pct_above_sma200: { type: number, nullable: true }
+            breadth_above_count: { type: integer }
+            breadth_eligible_count: { type: integer }
+            breadth_total_constituents: { type: integer }
+            price_source_name: { type: string }
+            breadth_source_name: { type: string }
+            breadth_source_as_of: { type: string, nullable: true }
+        as_of_date: { type: string, format: date }
+        per_strategy_favorability:
+          type: array
+          items:
+            type: object
+            properties:
+              slug: { type: string }
+              name: { type: string }
+              favorability: { type: string, enum: [Favorable, Neutral, Unfavorable] }
+              explanation: { type: string }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    MarketEventsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/MarketEvent' }
+        source_name: { type: string }
+        source_as_of: { type: string, format: date-time }
+        is_stale: { type: boolean }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    MarketEvent:
+      type: object
+      properties:
+        event_id: { type: string }
+        event_type: { type: string }
+        scheduled_at: { type: string, format: date-time }
+        expected_value: { type: string, nullable: true }
+        actual_value: { type: string, nullable: true }
+        status: { type: string, enum: [upcoming, released, cancelled] }
+        source_url: { type: string }
+
+    TickerEventsResponse:
+      type: object
+      properties:
+        ticker: { type: string }
+        next_earnings_date: { type: string, format: date, nullable: true }
+        days_to_earnings: { type: integer, nullable: true }
+        recent_8k_count_30d: { type: integer }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/TickerEvent' }
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              source_name: { type: string }
+              source_as_of: { type: string, format: date-time }
+              is_stale: { type: boolean }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    TickerEvent:
+      type: object
+      properties:
+        event_type: { type: string, enum: [earnings_scheduled, 8K_filed] }
+        event_date: { type: string, format: date }
+        event_time: { type: string, nullable: true, description: "Clock time as HH:MM:SS when the source provides one." }
+        source_name: { type: string }
+        source_url: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ShariahStatus:
+      type: object
+      description: Per-ticker compliance verdict under the composite Shariah lookup (FR-040).
+      properties:
+        ticker: { type: string }
+        is_compliant: { type: boolean }
+        source_kind:
+          type: string
+          enum: [external, user, excluded_by_user, not_listed]
+          description: |
+            "external" — compliant via an active external source (e.g., SPUS).
+            "user" — compliant only via the user's inclusion list.
+            "excluded_by_user" — non-compliant because the user added it to the exclusion list (overrides external inclusion).
+            "not_listed" — non-compliant because no active source includes it.
+        external_source_name:
+          type: string
+          nullable: true
+          description: Present when source_kind="external". E.g., "spus_holdings".
+        external_source_as_of:
+          type: string
+          format: date-time
+          nullable: true
+        is_stale: { type: boolean }
+        source_url: { type: string, nullable: true }
+        user_note:
+          type: string
+          nullable: true
+          description: Present when the user provided a rationale on their inclusion/exclusion entry.
+        conflict:
+          type: boolean
+          description: True when the ticker appears in both user inclusion and exclusion lists; exclusion still wins.
+        active_sources:
+          type: array
+          items: { type: string }
+        data_as_of:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+
+    UserShariahOverride:
+      type: object
+      required: [ticker, direction]
+      properties:
+        ticker: { type: string }
+        direction:
+          type: string
+          enum: [include, exclude]
+        added_at: { type: string, format: date-time, nullable: true }
+        note:
+          type: string
+          nullable: true
+          description: User's free-text rationale (e.g., link to a Shariah-board review they trust).
+
+    SizingRequest:
+      type: object
+      required: [candidate_ticker, entry, total_capital, holdings]
+      properties:
+        candidate_ticker: { type: string }
+        entry: { type: string, description: USD decimal. }
+        candidate_sector: { type: string }
+        total_capital: { type: string }
+        holdings:
+          type: array
+          items:
+            type: object
+            properties:
+              ticker: { type: string }
+              shares: { type: string }
+              current_price: { type: string }
+              sector: { type: string }
+        caps:
+          type: object
+          properties:
+            per_position_cap_pct: { type: number, default: 0.10 }
+            per_sector_cap_pct: { type: number, default: 0.25 }
+
+    PortfolioQuotesRequest:
+      type: object
+      properties:
+        holdings:
+          type: array
+          items:
+            type: object
+            required: [ticker]
+            properties:
+              ticker: { type: string }
+              strategy_slug: { type: string, default: midterm_52w_high_momentum }
+
+    PortfolioQuotesResponse:
+      type: object
+      required: [quotes, data_as_of, disclaimer]
+      properties:
+        quotes:
+          type: array
+          items:
+            type: object
+            required: [ticker, name, sector, strategy_slug, is_stale, data_as_of]
+            properties:
+              ticker: { type: string }
+              name: { type: string }
+              sector: { type: string }
+              strategy_slug: { type: string }
+              latest_price: { type: string, nullable: true }
+              entry: { type: string, nullable: true }
+              stop_loss: { type: string, nullable: true }
+              tighter_stop_loss: { type: string, nullable: true }
+              take_profit: { type: string, nullable: true }
+              is_stale: { type: boolean }
+              data_notes:
+                type: array
+                items: { type: string }
+              data_as_of: { type: string, format: date-time }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    BacktestResponse:
+      type: object
+      required: [strategy_slug, data_window_start, data_window_end, yearly_metrics, summary_metrics, data_sources, data_as_of, disclaimer]
+      properties:
+        strategy_slug: { type: string }
+        data_window_start: { type: string, format: date }
+        data_window_end: { type: string, format: date }
+        window_meets_v1_floor:
+          type: boolean
+          description: True iff window ≥ 15 years AND covers 2008-2009 (research.md Decision 15).
+        limited_window_warning:
+          type: string
+          nullable: true
+          description: Surfaced when window_meets_v1_floor is false; explains what the user is seeing.
+        data_sources:
+          type: array
+          items:
+            type: object
+            properties:
+              source_name: { type: string }
+              source_as_of: { type: string, format: date-time }
+        bias_check:
+          type: array
+          items:
+            type: object
+            properties:
+              item: { type: string }
+              passed: { type: boolean }
+              note: { type: string }
+        coverage_notes:
+          type: array
+          items: { type: string }
+          description: >-
+            Honest backtest-coverage limitations — e.g. years where names were near
+            their highs but point-in-time fundamentals were unavailable (SEC XBRL is
+            sparse before ~2011), so a fundamentals-dependent strategy contributes no
+            trades. Empty when every in-window year could be fully evaluated.
+        yearly_metrics:
+          type: array
+          items:
+            type: object
+            properties:
+              year: { type: integer }
+              trades: { type: integer }
+              hit_rate: { type: number }
+              avg_win: { type: number }
+              avg_loss: { type: number }
+              total_return: { type: number }
+              max_drawdown: { type: number }
+        summary_metrics:
+          type: object
+          properties:
+            total_return: { type: number }
+            max_drawdown: { type: number }
+            hit_rate: { type: number }
+            avg_win: { type: number }
+            avg_loss: { type: number }
+            turnover: { type: number }
+        code_version: { type: string }
+        computed_at: { type: string, format: date-time }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    EquityCurveResponse:
+      type: object
+      required: [strategy_slug, points, data_sources, data_as_of, disclaimer]
+      properties:
+        strategy_slug: { type: string }
+        points:
+          type: array
+          items:
+            type: object
+            required: [step, equity]
+            properties:
+              step: { type: integer, minimum: 1 }
+              equity: { type: number }
+        data_window_start: { type: string, format: date, nullable: true }
+        data_window_end: { type: string, format: date, nullable: true }
+        data_sources:
+          type: array
+          items:
+            type: object
+            properties:
+              source_name: { type: string }
+              source_as_of: { type: string, format: date-time }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    CandidateHistoryResponse:
+      type: object
+      required: [ticker, points, source_name, source_as_of, data_as_of, disclaimer]
+      properties:
+        ticker: { type: string }
+        points:
+          type: array
+          items:
+            type: object
+            required: [date, close, high, low]
+            properties:
+              date: { type: string, format: date }
+              close: { type: number }
+              high: { type: number }
+              low: { type: number }
+              sma_200: { type: number, nullable: true }
+              high_52w: { type: number, nullable: true }
+        source_name: { type: string }
+        source_as_of: { type: string, format: date-time }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
+
+    SizingResponse:
+      type: object
+      properties:
+        suggested_shares: { type: integer, description: Whole-share suggestion per FR-012. }
+        suggested_position_value: { type: string }
+        resulting_position_pct_of_capital: { type: number }
+        resulting_sector_pct_of_capital: { type: number }
+        caps_respected: { type: boolean }
+        reasoning: { type: string, description: Plain-language explanation. }
+        data_as_of: { type: string, format: date-time }
+        disclaimer: { type: string }
