@@ -227,10 +227,14 @@ def reference_tickers(frozen_snapshot: FrozenSnapshot) -> dict[str, dict[str, An
 
     if not df[df["ticker"] == "WYY"].empty:
         row = df[df["ticker"] == "WYY"].iloc[0]
+        # WYY fails BOTH quality (D/E ~5.9 > 1.5 ceiling) and low-asset-growth.
+        # Quality precedes asset_growth in the declared gate order, so the
+        # first-rejecting gate is quality. (The earlier oracle expected
+        # asset_growth, overlooking WYY's leverage — corrected per F-001.)
         refs["WYY"] = {
             "expected": "fail",
             "actual": "pass" if "WYY" in hard_candidates else "fail",
-            "expected_gate": "asset_growth",
+            "expected_gate": "quality",
             "actual_gate": first_rejecting_gate(row, frozen_snapshot),
         }
 

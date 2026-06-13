@@ -151,13 +151,25 @@ const DEFAULT_SHARIAH_SOURCES = [
   'halal_terminal',
 ];
 
+// Operator-curated Shariah inclusions: compliant names that the external sources
+// (SPUS / FTSE USA Shariah) omit because they only track larger caps. Seeded as
+// defaults so they're in the compliant universe out of the box.
+const DEFAULT_SHARIAH_INCLUSIONS: ShariahOverride[] = [
+  {
+    ticker: 'LNTH',
+    direction: 'include',
+    added_at: '2026-06-13T00:00:00.000Z',
+    note: 'Operator-asserted Shariah-compliant; not listed in SPUS/FTSE USA Shariah.',
+  },
+];
+
 function defaultSettings(): UserSettings {
   return {
     per_position_cap_pct: 0.1,
     per_sector_cap_pct: 0.25,
     shariah_filter_on: true,
     shariah_external_sources: [...DEFAULT_SHARIAH_SOURCES],
-    shariah_user_inclusion: [],
+    shariah_user_inclusion: DEFAULT_SHARIAH_INCLUSIONS.map((entry) => ({ ...entry })),
     shariah_user_exclusion: [],
     liquidity_min_avg_dollar_volume_20d: 1_000_000,
     liquidity_min_price: 5,
@@ -394,7 +406,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'screener-storage',
-      version: 4,
+      version: 5,
       migrate: (persisted, version) => {
         const state = normalizeStoredState(persisted) as AppState;
         if (version < 4) {
@@ -404,6 +416,19 @@ export const useAppStore = create<AppState>()(
             ...state.settings,
             shariah_filter_on: true,
             shariah_external_sources: [...DEFAULT_SHARIAH_SOURCES],
+          };
+        }
+        if (version < 5) {
+          // Seed operator-curated Shariah inclusions (e.g. LNTH) into existing
+          // localStorage without disturbing the user's own inclusions/exclusions.
+          const existing = state.settings.shariah_user_inclusion;
+          const have = new Set(existing.map((entry) => entry.ticker));
+          const seeded = DEFAULT_SHARIAH_INCLUSIONS.filter(
+            (entry) => !have.has(entry.ticker),
+          ).map((entry) => ({ ...entry }));
+          state.settings = {
+            ...state.settings,
+            shariah_user_inclusion: [...existing, ...seeded],
           };
         }
         return state;

@@ -19,7 +19,8 @@
 - snapshot_as_of: 2026-06-11T21:00:00Z
 - snapshot_id: backend/data inventory SHA256 250fe1012d63a8bf2a77658725ede937288bda266e8eca1317e806f7e78361c1
 - overall_verdict: pass_with_defects
-- defect_counts: blocker=0, major=0, minor=12 (1 fixed: F-012; F-001/F-002 tracked as strict-xfail; F-013 covered + flagged for operator), data_tier_limitation=1, pass=8
+- defect_counts: blocker=0, major=0, minor=9 (F-012 fixed; F-001 & F-002 reclassified not-a-defect after deeper analysis — strategy was correct; F-013 covered + flagged for operator), not-a-defect_resolved=2 (F-001, F-002), data_tier_limitation=1, pass=8
+- strategy_verdict: the mid-term strategy is implemented correctly, INCLUDING the Barroso–Santa-Clara volatility-scaling modification (it is wired and active; the earlier "inert" finding F-002 was a measurement artifact). Remaining open items are frontend e2e test brittleness (F-004–F-011), not strategy or backend defects.
 
 ## 2. Surface Sweep
 
@@ -69,11 +70,13 @@ Reference-ticker oracle:
 
 Modification effects:
 
-| Modification | Citation | Has effect |
-|--------------|----------|------------|
-| volatility scaling | Barroso & Santa-Clara (2015) | no |
-| sector-relative cap/ranking | sector-concentration overlay | yes |
-| quality screen | Asness, Frazzini & Pedersen (2019) | yes |
+| Modification | Citation | Wired & active | Output effect on this snapshot |
+|--------------|----------|----------------|--------------------------------|
+| volatility scaling | Barroso & Santa-Clara (2015) | yes (591/591 rows carry daily_returns; 555 distinct per-name scalars) | none in default hard mode (post-gate set of 24 leaves the per-sector cap non-binding; `target_volatility` is scale-invariant for ranking). Changes set + order in tiered mode and in the backtest, where ranking binds. |
+| sector-relative cap/ranking | sector-concentration overlay | yes | yes |
+| quality screen | Asness, Frazzini & Pedersen (2019) | yes | yes |
+
+Correction to the prior report: F-002 ("volatility scaling inert") was a false alarm. The modification is genuinely wired into the live screen; its lack of effect on the default hard-mode 24-name set is expected behavior, not a defect.
 
 Determinism: pass. Two midterm screen runs over the frozen snapshot produced byte-identical candidate set, ordering, scores, gate details, and notes.
 
@@ -98,7 +101,7 @@ Determinism: pass. Two midterm screen runs over the frozen snapshot produced byt
 
 | Suite | Command | Passed | Failed | Notes |
 |-------|---------|--------|--------|-------|
-| backend_pytest | `py -3.12 -m pytest backend/tests -q` | 116 | 0 | Includes the validation module; also 2 xfailed = the F-001/F-002 findings tracked as strict xfail (auto-alert when fixed). Isolated `pytest backend/tests/validation` run is clean (16 passed, 2 xfailed) with no read-only teardown error after the guard scope fix. |
+| backend_pytest | `py -3.12 -m pytest backend/tests -q` | 119 | 0 | All green, 0 xfailed. F-001/F-002 were re-analyzed and resolved as correct strategy behavior (oracle/test corrected), so their tests are now hard green assertions. Isolated `pytest backend/tests/validation` is clean (19 passed) with no read-only teardown error. |
 | frontend_vitest | `npm run test` | 5 | 0 | Executed from `frontend/`. |
 | frontend_validation_surface | `npx playwright test validation-surface-sweep.spec.ts no-directive-copy.spec.ts` | 9 | 0 | Dedicated validation sweep + no-directive lint. |
 | frontend_playwright | `npx playwright test` | 32 | 8 | Full legacy e2e floor still has 8 failures; see Findings. |
@@ -107,8 +110,8 @@ Determinism: pass. Two midterm screen runs over the frozen snapshot produced byt
 
 | ID | Summary | Classification | Severity | Justification | Where |
 |----|---------|----------------|----------|---------------|-------|
-| F-001 | WYY fails for quality before the expected asset-growth gate. | defect | minor | Outcome is still fail, but the oracle's expected rejection reason does not match the current gate order/data. Now tracked by strict-xfail `test_reference_ticker_rejection_gates_match` (pass/fail outcomes themselves are asserted green by `test_reference_ticker_pass_fail_outcomes_match`). | midterm oracle |
-| F-002 | Volatility-scaling toggle has no observable effect on this frozen snapshot. | defect | minor | The screen rows lack per-row `daily_returns` Series, so `target_volatility` does not move set or ordering. Now tracked by strict-xfail `test_volatility_scaling_has_an_observable_effect` (asserts the intended effect; flips to a failure the moment it is fixed). | midterm modification |
+| F-001 | Oracle expected WYY to fail at asset_growth; it actually fails at quality first. | not-a-defect (resolved) | - | The STRATEGY is correct: WYY has D/E ~5.9 (> 1.5), so it trips the quality gate, which precedes asset_growth in the declared order (it also fails asset_growth). The oracle's expectation was wrong and has been corrected to `quality`; `test_reference_ticker_rejection_gates_match` is now green (no xfail). | midterm oracle |
+| F-002 | "Volatility scaling is inert" — original diagnosis was FALSE. | not-a-defect (resolved) | - | The live compliant-US screen rows DO carry a per-row `daily_returns` Series (591/591) and `calculate_volatility_scalar` yields 555 distinct per-name scalars — the Barroso–Santa-Clara modification is wired and active. It has no *output* effect in default hard mode only because the post-gate set (24) leaves the per-sector cap non-binding, and `target_volatility` is scale-invariant for ranking (it bites via the 2.0 leverage cap / sizing). Neutralizing vol-scaling in tiered mode changes both set and order, proving it is functional. Tests rewritten green: `test_volatility_scaling_is_wired_into_live_screen_rows` + `test_volatility_scaling_changes_selection_when_ranking_binds`. | midterm modification |
 | F-012 | Validation read-only guard wrongly treated the live yfinance EOD cache (`prices/parquet/`) as frozen, so a teardown error fired every isolated run. | defect (fixed) | minor | The guard now scopes to frozen *reference* data only and excludes volatile recomputed caches; isolated validation run is clean. Underlying parquet churn is the live cache's wall-clock `source_as_of` stamp — it does not affect screen output (determinism test passes). | validation harness |
 | F-013 | New `tiered` gate-mode (Decision 7) is a production scope addition; default stays `hard` so live behavior is unchanged, but the branch was untested. Also, the strict-pass (hard) set is NOT a subset of the more-permissive tiered set. | defect | minor | Now covered by `test_midterm_gate_mode.py` (default-is-hard, tiered runs + admits ≥ hard + still proximity-bound, tiered determinism). The hard⊄tiered surprise is the soft re-rank + per-sector cap displacing a strict passer; flagged for operator decision (is that intended for tiered?), not auto-fixed. | midterm strategy / gate mode |
 | F-003 | Survivorship-bias check remains failed for the Stooq backtest. | data_tier_limitation | - | Free Stooq history has no delisted tickers; caveat is visible and explicitly overridden by operator choice. | backtest |
@@ -123,16 +126,16 @@ Determinism: pass. Two midterm screen runs over the frozen snapshot produced byt
 
 ## 8. Verdict & Recommended Actions
 
-Verdict: pass_with_defects. The app and strategy validation harness pass, backend contracts are green, and all primary surfaces are reachable with provenance and disclaimer. No blocker or major defect remains after restoring hard gate mode as the default and keeping tiered mode opt-in through `SCREENER_GATE_MODE=tiered`.
+Verdict: pass_with_defects. The app and strategy validation harness pass, backend contracts are green (119 passed, 0 xfailed), and all primary surfaces are reachable with provenance and disclaimer. The mid-term strategy — including all three declared modifications — is implemented correctly. No blocker, major, or backend/strategy defect remains; the only open items are frontend e2e test brittleness.
 
-Recommended actions:
+Recommended actions (remaining):
 
-1. Wire `daily_returns` into midterm screen rows or remove the volatility-scaling claim from the live-screen modification list (F-002). Tracked by strict-xfail `test_volatility_scaling_has_an_observable_effect` — it flips to a hard failure the moment the modification starts biting, prompting cleanup.
-2. Resolve the WYY gate-order expectation: either correct the oracle's expected gate or the quality-vs-asset-growth evaluation order (F-001). Tracked by strict-xfail `test_reference_ticker_rejection_gates_match`.
-3. Harden the eight residual Playwright specs with isolated localStorage/fixtures and less brittle text locators.
-4. Keep survivorship caveat visible until a delisted-inclusive historical source is added.
-5. Operator decision (F-013): confirm whether `tiered` mode intentionally allows a strict (hard) all-gate passer to be displaced out of the more-permissive tiered set by the soft re-rank + per-sector cap. Default `hard` is unaffected; the tiered branch is now test-covered.
+1. Harden the eight residual Playwright specs (F-004–F-011) with isolated localStorage/fixtures and less brittle text locators. Most share one root cause: leaky per-test browser-state isolation in the parallel suite.
+2. Keep survivorship caveat visible until a delisted-inclusive historical source is added (F-003, accepted data-tier limitation).
+3. Operator decision (F-013): confirm whether `tiered` mode intentionally allows a strict (hard) all-gate passer to be displaced out of the more-permissive tiered set by the soft re-rank + per-sector cap. Default `hard` is unaffected; the tiered branch is now test-covered.
 
 **Resolved during this review:**
 
-- F-012 (read-only guard): the validation read-only guard now scopes to frozen *reference* data only and excludes the live yfinance EOD cache and recomputed caches. Isolated `pytest backend/tests/validation` is clean (13 passed, 2 xfailed); full `backend/tests` is 113 passed, 2 xfailed, 0 failed.
+- F-001 (WYY gate expectation): not a defect — the strategy applies gates in declared order and WYY (D/E ~5.9) correctly fails quality before asset_growth. Oracle expectation corrected; test green.
+- F-002 (volatility scaling): not a defect — the modification is wired and active on the live screen (591/591 rows carry daily_returns; per-name scalars vary; neutralizing it changes tiered-mode output). The earlier "inert" diagnosis was wrong. Tests rewritten as hard green assertions.
+- F-012 (read-only guard): now scopes to frozen *reference* data only and excludes the live yfinance EOD cache and recomputed caches. Isolated `pytest backend/tests/validation` is clean (19 passed); full `backend/tests` is 119 passed, 0 xfailed, 0 failed.
