@@ -1,11 +1,29 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/006-midterm-sidebyside-compare/plan.md` (active feature 006), which builds
-on the 005 value strategy, 004 advisor export, 003 comparison, 002 validation,
-and 001 MVP below.
+`specs/007-value-coverage-hardening/plan.md` (active feature 007), which builds
+on the 006 side-by-side compare, 005 value strategy, 004 advisor export, 003
+comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 006-midterm-sidebyside-compare
+## Active feature: 007-value-coverage-hardening
+
+Harden the live `midterm_value_composite` screen after real-operation findings,
+on two axes. **Data coverage**: re-fetch the ~530 failed-fetch EDGAR stub files
+for real US filers (resumable `scripts/refresh_edgar_coverage.py`), filter
+non-US-GAAP instruments (preferred/ADR/CEF/ETF) out of the value universe via a
+new `data/instruments.py`, and split the price-staleness gate so a stale *local*
+bar reads "refresh ingest" instead of false "halted/suspended" (only true
+delistings like CTLP stay excluded). **Correctness & disclosure**: add a hard
+**profitability gate** (Piotroski CFO>0 and ROA>0) so loss-makers can't rank
+cheap; add a **minimum-risk ATR stop floor** (≥1×ATR) so degenerate R-multiples
+can't print; ship the **falling-knife guard ON at −0.20** by default; and surface
+the cheapness-cut gate, sub-9 F-Score confidence, within-sector grouping/cap,
+regime-blind banner, and data-quality flags. Closes with a slim-cache rebuild +
+value backtest regeneration + `claude-project/` advisor-pack re-sync. Test-first
+for every strategy-logic change (Principle IV). Plan:
+`specs/007-value-coverage-hardening/plan.md`.
+
+## Prior feature: 006-midterm-sidebyside-compare
 
 Add a **live-screen, four-variant side-by-side run** for the mid-term band plus a
 **single four-variant advisor-prompt export**. In one action it runs both
