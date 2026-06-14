@@ -25,7 +25,9 @@ _PATH = Path(__file__).resolve().parents[3] / "data" / "reference_thresholds.jso
 
 
 def load_reference_thresholds() -> dict | None:
-    """Cached {gp_threshold, ag_threshold, as_of, universe_size} or None."""
+    """Cached {gp_threshold, ag_threshold, value_composite_threshold, as_of,
+    universe_size} or None. The value-composite cut is optional (older caches
+    predate it); callers must tolerate its absence."""
     try:
         with open(_PATH, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -33,9 +35,28 @@ def load_reference_thresholds() -> dict | None:
         return None
     if not isinstance(payload, dict):
         return None
-    if payload.get("gp_threshold") is None and payload.get("ag_threshold") is None:
+    if (
+        payload.get("gp_threshold") is None
+        and payload.get("ag_threshold") is None
+        and payload.get("value_composite_threshold") is None
+    ):
         return None
     return payload
+
+
+def compute_value_composite_threshold(
+    df: pd.DataFrame, top_percentile: float
+) -> float | None:
+    """Reference cut for the value composite: keep names at/above this score
+    (cheapest top fraction). `top_percentile` is the fraction kept (0.5 = cheapest
+    half), so the threshold is the (1 - top_percentile) quantile of the composite.
+    Returns None when the composite is absent/empty or the cut is disabled."""
+    if not (0.0 < top_percentile < 1.0) or "value_composite" not in df.columns:
+        return None
+    valid = pd.to_numeric(df["value_composite"], errors="coerce").dropna()
+    if valid.empty:
+        return None
+    return float(valid.quantile(1.0 - top_percentile))
 
 
 def compute_thresholds(
@@ -61,11 +82,13 @@ def save_reference_thresholds(
     *,
     universe_size: int,
     as_of: str | None,
+    value_composite_threshold: float | None = None,
 ) -> dict:
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "gp_threshold": gp_threshold,
         "ag_threshold": ag_threshold,
+        "value_composite_threshold": value_composite_threshold,
         "universe_size": int(universe_size),
         "as_of": as_of,
         "computed_at": datetime.now(timezone.utc).isoformat(),

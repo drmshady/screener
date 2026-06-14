@@ -46,6 +46,17 @@ NEEDED_TAGS = [
     "StockholdersEquity",
     "NetCashProvidedByUsedInOperatingActivities",
     "PaymentsToAcquirePropertyPlantAndEquipment",
+    # Added for midterm_value_composite: value-composite yields + Piotroski F-Score
+    # (FundamentalsLoader.value_metrics_as_of). Net income, shares, current
+    # assets/liabilities, and long-term debt — plus their prior-year values, which
+    # come from the same multi-period tags above.
+    "NetIncomeLoss",
+    "EntityCommonStockSharesOutstanding",
+    "CommonStockSharesOutstanding",
+    "AssetsCurrent",
+    "LiabilitiesCurrent",
+    "LongTermDebtNoncurrent",
+    "LongTermDebt",
 ]
 
 # Strategy gate parameters (kept in step with midterm_52w_high_momentum.PARAMETERS).
@@ -149,29 +160,70 @@ def _candidate_pool(prices_feat: pd.DataFrame, as_of: date, strategy_slug: str) 
             & (elig["close"] > elig["sma_200"])
             & (elig["sma_200"] > elig["sma_200_20d_ago"])
         ]
+    if strategy_slug == "midterm_value_composite":
+        # Value has no price pre-filter (cheapness is cross-sectional and decided
+        # inside rules()); the pool is simply the liquid, ≥252-bar universe.
+        return elig
     return elig
 
 
 # --------------------------------------------------------------------------- #
 # Point-in-time fundamentals (slim, disk-cached) + sector
 # --------------------------------------------------------------------------- #
+# Bumped whenever NEEDED_TAGS grows, so already-cached slim files (built with an
+# older, narrower tag set) are re-fetched once on the next backtest run instead of
+# silently serving incomplete fundamentals. v2 adds the value-composite + Piotroski
+# concepts (NetIncomeLoss, shares, current assets/liabilities, long-term debt).
+# v3 also retains the dei cover-page share count (EntityCommonStockSharesOutstanding),
+# the reliable full share count for modern filers — without it market cap fell back
+# to a stale us-gaap count and produced 1000x-wrong yields (the RTX bug).
+SLIM_SCHEMA_VERSION = 3
+
+
+def _slim_is_current(slim: dict[str, Any]) -> bool:
+    """A cached slim payload is current if it was written at the active schema
+    version. Older payloads (no version, or a known-empty error stub) are stale and
+    get re-fetched so the new value concepts are present."""
+    if slim.get("schema_version") == SLIM_SCHEMA_VERSION:
+        return True
+    # Keep known-empty error stubs (the fetch genuinely failed) to avoid hammering
+    # SEC for delisted/invalid tickers every run.
+    return bool(slim.get("fetch_failed"))
+
+
 def get_slim_facts(loader: FundamentalsLoader, ticker: str) -> dict[str, Any]:
-    """Fetch (once) and cache only the EDGAR concepts the quality gate needs."""
+    """Fetch (once) and cache only the EDGAR concepts the strategies consume.
+    Re-fetches when the cached file predates the current SLIM_SCHEMA_VERSION."""
     EDGAR_CACHE.mkdir(parents=True, exist_ok=True)
     path = EDGAR_CACHE / f"{ticker}.json"
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if _slim_is_current(cached):
+            return cached
     try:
         payload = loader.fetch_company_facts(ticker)
     except Exception:
-        slim = {"facts": {"us-gaap": {}}, "sic": None}
+        slim = {"facts": {"us-gaap": {}}, "sic": None, "fetch_failed": True,
+                "schema_version": SLIM_SCHEMA_VERSION}
         path.write_text(json.dumps(slim), encoding="utf-8")
         time.sleep(SEC_RATE_LIMIT_SLEEP)
         return slim
     us_gaap = payload.get("facts", {}).get("us-gaap", {})
+    slim_facts: dict[str, Any] = {
+        "us-gaap": {tag: us_gaap[tag] for tag in NEEDED_TAGS if tag in us_gaap}
+    }
+    # Retain the dei cover-page share count — the reliable full share count for
+    # market cap on modern filers (us-gaap CommonStockSharesOutstanding is often
+    # stale or scaled). See _shares_outstanding_as_of.
+    dei = payload.get("facts", {}).get("dei", {})
+    if "EntityCommonStockSharesOutstanding" in dei:
+        slim_facts["dei"] = {
+            "EntityCommonStockSharesOutstanding": dei["EntityCommonStockSharesOutstanding"]
+        }
     slim = {
-        "facts": {"us-gaap": {tag: us_gaap[tag] for tag in NEEDED_TAGS if tag in us_gaap}},
+        "facts": slim_facts,
         "sic": payload.get("sic"),
+        "schema_version": SLIM_SCHEMA_VERSION,
     }
     path.write_text(json.dumps(slim), encoding="utf-8")
     time.sleep(SEC_RATE_LIMIT_SLEEP)
@@ -212,7 +264,10 @@ def _build_snapshot(
     facts: dict[str, dict[str, Any]],
     sectors: dict[str, str],
     uses_fundamentals: bool,
+    uses_value: bool = False,
 ) -> tuple[pd.DataFrame, int]:
+    from ..screening.engine import _value_row_fields
+
     loader = FundamentalsLoader()
     as_of_ts = pd.Timestamp(as_of)
     rows: list[dict[str, Any]] = []
@@ -236,7 +291,13 @@ def _build_snapshot(
         if pd.isna(atr) or pd.isna(ret_12_1):
             continue
         q = loader.quality_metrics_as_of(ticker, as_of, payload=facts.get(ticker)) if uses_fundamentals else {}
-        if any(q.get(k) is not None for k in ("fcf_ttm", "gp_to_assets")):
+        value_fields: dict[str, Any] = {}
+        if uses_value:
+            vm = loader.value_metrics_as_of(ticker, as_of, payload=facts.get(ticker))
+            value_fields = _value_row_fields({"value_metrics": vm}, float(close.iloc[-1]))
+        if any(q.get(k) is not None for k in ("fcf_ttm", "gp_to_assets")) or (
+            uses_value and value_fields.get("f_score_evaluable", 0) > 0
+        ):
             point_in_time += 1
         prior_high_20 = high.iloc[:-1].tail(20).max() if len(high) > 20 else None
         prior_high_50 = high.iloc[:-1].tail(50).max() if len(high) > 50 else None
@@ -274,6 +335,7 @@ def _build_snapshot(
                 "debt_to_equity": q.get("debt_to_equity"),
                 "gp_to_assets": q.get("gp_to_assets"),
                 "asset_growth": q.get("asset_growth"),
+                **value_fields,
                 "atr": float(atr),
                 "breakout_high_20": float(prior_high_20) if prior_high_20 is not None and pd.notna(prior_high_20) else None,
                 "breakout_high_50": float(prior_high_50) if prior_high_50 is not None and pd.notna(prior_high_50) else None,
@@ -342,7 +404,8 @@ def run_backtest(
     strategy = registry.get(strategy_slug)
     if strategy is None:
         raise KeyError(strategy_slug)
-    uses_fundamentals = strategy_slug == "midterm_52w_high_momentum"
+    uses_value = strategy_slug == "midterm_value_composite"
+    uses_fundamentals = strategy_slug == "midterm_52w_high_momentum" or uses_value
 
     source_name: str | None = None
     if prices is not None:
@@ -422,7 +485,9 @@ def run_backtest(
         if pool.empty:
             yearly_metrics.append(yearly_metric(as_of.year, []))
             continue
-        snapshot, pit = _build_snapshot(by_ticker, pool, as_of, facts, sectors, uses_fundamentals)
+        snapshot, pit = _build_snapshot(
+            by_ticker, pool, as_of, facts, sectors, uses_fundamentals, uses_value
+        )
         total_point_in_time += pit
         # Honest coverage note: a year with names near their highs but almost no
         # point-in-time fundamentals can't be screened by a fundamentals strategy
@@ -434,8 +499,11 @@ def run_backtest(
             and not snapshot.empty
             and pit < max(1, int(0.1 * len(snapshot)))
         ):
+            pool_desc = (
+                "liquid names" if uses_value else "names near the 52-week high"
+            )
             coverage_notes.append(
-                f"{as_of.year}: {len(pool)} names near the 52-week high but only"
+                f"{as_of.year}: {len(pool)} {pool_desc} but only"
                 f" {pit}/{len(snapshot)} had point-in-time fundamentals — the"
                 " fundamentals-dependent gates could not be evaluated (SEC XBRL"
                 " coverage is sparse before ~2011), so this year contributes no trades"

@@ -9,22 +9,22 @@ from ..models.strategy import AnalyzeResponse, Strategy
 # Input gatherers (read-only; no recomputation of any candidate figure)
 # ---------------------------------------------------------------------------
 
-_BACKTEST_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "backtests"
-    / "midterm_52w_high_momentum.json"
-)
+_BACKTEST_DIR = Path(__file__).resolve().parents[2] / "data" / "backtests"
+_BACKTEST_PATH = _BACKTEST_DIR / "midterm_52w_high_momentum.json"
 
 
-def load_survivorship_status(path: Path | None = None) -> dict:
+def load_survivorship_status(
+    path: Path | None = None, slug: str | None = None
+) -> dict:
     """Read the backtest artifact's survivorship-bias status.
 
     Returns ``{"confirmed": bool, "passed": bool | None, "note": str}``. When the
     artifact is missing/unreadable, ``confirmed`` is False and the honesty block
     states the status is unconfirmed (it never implies the backtest is clean).
+    The artifact is selected by ``slug`` (defaulting to the momentum strategy for
+    back-compatibility) or an explicit ``path``.
     """
-    p = path or _BACKTEST_PATH
+    p = path or (_BACKTEST_DIR / f"{slug}.json" if slug else _BACKTEST_PATH)
     try:
         payload = json.loads(p.read_text(encoding="utf-8"))
         item = payload["bias_check"]["survivorship_bias"]
@@ -84,6 +84,19 @@ def _diagnostics_lines(c) -> list[str]:
         rank_bits.append(f"vol_scalar {_fmt_num(c.vol_scalar)}")
     if getattr(c, "dist_to_high", None) is not None:
         rank_bits.append(f"dist_to_high {_fmt_num(c.dist_to_high, pct=True)}")
+    # Value-composite diagnostics (midterm_value_composite); shown only when present.
+    if getattr(c, "value_composite", None) is not None:
+        rank_bits.append(f"value composite {_fmt_num(c.value_composite)}")
+    if getattr(c, "f_score", None) is not None:
+        evaluable = getattr(c, "f_score_evaluable", None)
+        if evaluable is not None:
+            ev = int(evaluable)
+            note = f" ({ev}/9 components evaluable" + (
+                "; too few to be reliable)" if ev < 5 else ")"
+            )
+        else:
+            note = ""
+        rank_bits.append(f"Piotroski F-Score {int(c.f_score)}/9{note}")
 
     fund_bits: list[str] = []
     if getattr(c, "debt_to_equity", None) is not None:
@@ -94,6 +107,14 @@ def _diagnostics_lines(c) -> list[str]:
         fund_bits.append(f"gp/assets {_fmt_num(c.gp_to_assets)}")
     if getattr(c, "asset_growth", None) is not None:
         fund_bits.append(f"asset_growth {_fmt_num(c.asset_growth, pct=True)}")
+    if getattr(c, "book_to_market", None) is not None:
+        fund_bits.append(f"book/market {_fmt_num(c.book_to_market)}")
+    if getattr(c, "earnings_yield", None) is not None:
+        fund_bits.append(f"earnings yield {_fmt_num(c.earnings_yield, pct=True)}")
+    if getattr(c, "cashflow_yield", None) is not None:
+        fund_bits.append(f"cash-flow yield {_fmt_num(c.cashflow_yield, pct=True)}")
+    if getattr(c, "sales_yield", None) is not None:
+        fund_bits.append(f"sales yield {_fmt_num(c.sales_yield)}")
     if getattr(c, "atr", None) is not None:
         fund_bits.append(f"ATR {_fmt_num(c.atr)}")
 
@@ -144,9 +165,21 @@ def _strategy_context(strategy: Strategy, gate_names: list[str]) -> str:
         lines.append("- Gates evaluated: " + ", ".join(gate_names) + ".")
     mps = strategy.parameters.get("max_per_sector") if strategy.parameters else None
     max_per_sector = getattr(mps, "default", 5)
+    if strategy.slug == "midterm_value_composite":
+        ranking = (
+            "survivors are scored by the value composite (mean cross-sectional "
+            "percentile rank of book/market, earnings, cash-flow and sales yields; "
+            "higher = cheaper)"
+        )
+    elif strategy.slug == "midterm_52w_high_momentum":
+        ranking = (
+            "survivors are scored by return_12_1 × vol_scalar / (1 + dist_to_high) "
+            "(higher = stronger)"
+        )
+    else:
+        ranking = "survivors are scored by the strategy's ranking expression (higher = stronger)"
     lines.append(
-        "- Ranking: survivors are scored by return_12_1 × vol_scalar / (1 + dist_to_high) "
-        f"(higher = stronger), then kept to at most {max_per_sector} per sector "
+        f"- Ranking: {ranking}, then kept to at most {max_per_sector} per sector "
         "(sector-relative ranking). Any names beyond a sector's cap were dropped before this list."
     )
     lines.append("- Modifications (each with its own source):")
@@ -299,7 +332,7 @@ def _batch_task_instruction(directive: bool, n: int) -> str:
     )
 
 
-def _candidate_summary_block(c) -> str:
+def _candidate_summary_block(c, *, sector_gate_on: bool = False) -> str:
     """Compact per-candidate block for the batch prompt (operates on a Candidate)."""
     rr = _reward_risk(c.entry, c.stop_loss, c.take_profit)
     rank = getattr(c, "rank", None)
@@ -318,10 +351,52 @@ def _candidate_summary_block(c) -> str:
         gate_bits.append(f"{tag}:{g.gate}")
     if gate_bits:
         lines.append("- Gates: " + "; ".join(gate_bits))
-    skipped = [g.gate for g in c.gate_results if g.status == "skipped"]
+    # A gate skipped on MISSING DATA is a genuine gap. The sector-strength gate
+    # skipped because it is switched OFF this run is a configuration choice, not a
+    # data gap (the Run configuration section explains it), so don't flag it here.
+    skipped = [
+        g.gate
+        for g in c.gate_results
+        if g.status == "skipped"
+        and not (g.gate == "Sector strength" and not sector_gate_on)
+    ]
     if skipped:
         lines.append(
             "- Data gaps (skipped, NOT real passes): " + ", ".join(skipped)
+        )
+    return "\n".join(lines)
+
+
+def _sector_gate_state(screen) -> tuple[bool, float | None]:
+    """Resolve the sector-strength gate state for this run from the screen's
+    parameter snapshot. Returns (on, fraction). on iff 0 < fraction < 1."""
+    snap = getattr(screen, "parameters_snapshot", None) or {}
+    raw = snap.get("sector_strength_top_fraction")
+    try:
+        frac = float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        frac = None
+    return (frac is not None and 0.0 < frac < 1.0), frac
+
+
+def _run_config_block(screen) -> str:
+    """State the run's toggled configuration explicitly so the advisor doesn't have
+    to infer it from gate statuses. Currently surfaces the sector-strength gate."""
+    on, frac = _sector_gate_state(screen)
+    lines = ["## Run configuration"]
+    if on:
+        pct = int(round(frac * 100))
+        lines.append(
+            f"- Sector-strength gate: ON — only candidates in the top {pct}% of sectors by "
+            "breadth (fraction of members above their 200-day SMA) are kept; names in weaker "
+            "sectors were filtered out BEFORE this list (Moskowitz & Grinblatt 1999, industry "
+            "momentum). So every name below has already cleared sector strength."
+        )
+    else:
+        lines.append(
+            "- Sector-strength gate: OFF (default) — sector strength is NOT filtering this run. "
+            "Any 'Sector strength: SKIPPED' below is by configuration, not missing data; do not "
+            "treat it as a quality gap or penalize a name for it."
         )
     return "\n".join(lines)
 
@@ -375,14 +450,18 @@ def build_screen_advisor_prompt(
     """
     candidates = list(screen.candidates)
     gate_names = [g.gate for g in candidates[0].gate_results] if candidates else []
+    sector_gate_on, _ = _sector_gate_state(screen)
     body = (
-        "\n\n".join(_candidate_summary_block(c) for c in candidates)
+        "\n\n".join(
+            _candidate_summary_block(c, sector_gate_on=sector_gate_on) for c in candidates
+        )
         if candidates
         else "_No candidates matched the screen._"
     )
     sections = [
         _batch_task_instruction(directive, len(candidates)),
         _strategy_context(strategy, gate_names),
+        _run_config_block(screen),
         _regime_block(strategy, getattr(screen, "regime", None)),
         f"## Candidates ({len(candidates)})\n{body}",
         _batch_honesty_block(screen, survivorship, directive),

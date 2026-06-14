@@ -18,13 +18,21 @@ type State = {
  * the preview is marked with `data-personal-use-prompt` so the no-directive
  * lint can scope its exemption to that element only.
  */
-export function CopyAdvisorPrompt({ ticker, asOf }: { ticker: string; asOf?: string }) {
+export function CopyAdvisorPrompt({
+  ticker,
+  asOf,
+  strategy,
+}: {
+  ticker: string;
+  asOf?: string;
+  strategy?: string;
+}) {
   const [state, setState] = useState<State>({});
 
   async function generate() {
     setState({ loading: true });
     try {
-      const res = await fetchAdvisorPrompt(ticker, asOf);
+      const res = await fetchAdvisorPrompt(ticker, asOf, strategy);
       const copied = await copyText(res.prompt);
       setState({ prompt: res.prompt, directive: res.personal_use_directive, copied });
     } catch (error) {

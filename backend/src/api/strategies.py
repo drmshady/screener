@@ -91,7 +91,7 @@ def screen_advisor_prompt(slug: str, request: ScreenRunRequest):
     prompt = build_screen_advisor_prompt(
         screen,
         strat,
-        survivorship=load_survivorship_status(),
+        survivorship=load_survivorship_status(slug=slug),
         directive=directive,
     )
     return ScreenAdvisorPromptResponse(

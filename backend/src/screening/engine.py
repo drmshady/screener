@@ -19,7 +19,14 @@ from ..data.market_calendar import drop_market_weekends, market_of, trading_days
 from ..events.service import EventsService, TickerEventsSnapshot
 from ..indicators.momentum import calculate_12_1_return
 from ..indicators.moving_averages import calculate_sma
+from ..indicators.piotroski import f_score_from_mapping
 from ..indicators.price_action import calculate_chandelier_exit_long
+from ..indicators.valuation import (
+    book_to_market,
+    cashflow_yield,
+    earnings_yield,
+    sales_yield,
+)
 from ..indicators.volatility import calculate_adr_ratio, calculate_atr
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..models.strategy import Candidate, ScreenResult
@@ -283,6 +290,62 @@ def build_single_ticker_snapshot(
     return snapshot, latest_iso, data_notes
 
 
+_VALUE_F_SCORE_KEYS = (
+    "net_income",
+    "total_assets",
+    "operating_cf",
+    "long_term_debt",
+    "current_assets",
+    "current_liabilities",
+    "shares_outstanding",
+    "gross_profit",
+    "revenue",
+)
+
+
+def _value_row_fields(profile: dict[str, Any], close_px: float) -> dict[str, Any]:
+    """Per-row value-composite yields + Piotroski F-Score from a profile's
+    point-in-time ``value_metrics`` dict. The cross-sectional composite percentile
+    is computed later over the whole universe (see strategies/_helpers/
+    value_composite); here we only produce the per-name yields and F-Score. All
+    fields default to ``None`` when the value inputs are unavailable (fail-open)."""
+    vm = profile.get("value_metrics") or {}
+    shares = vm.get("shares_outstanding")
+    market_cap = (
+        float(close_px) * float(shares)
+        if shares is not None and pd.notna(shares) and float(shares) > 0
+        else None
+    )
+    prior = {k: vm.get(f"prior_{k}") for k in _VALUE_F_SCORE_KEYS}
+    fs, fs_eval, _signals = f_score_from_mapping(vm, prior)
+
+    bm = book_to_market(vm.get("common_equity"), market_cap)
+    ey = earnings_yield(vm.get("net_income"), market_cap)
+    cy = cashflow_yield(vm.get("operating_cf"), market_cap)
+    sy = sales_yield(vm.get("revenue"), market_cap)
+    # Sanity backstop: every yield shares the market_cap denominator, so a corrupted
+    # (e.g. stale/wrong-unit) share count makes ALL of them implausibly large at
+    # once. A real US equity does not have book/market > ~25 or an earnings/cash-flow
+    # yield beyond ±300%. If any yield blows past those bounds the market cap is not
+    # trustworthy → drop all value yields (the name is excluded rather than top-ranked
+    # on bad data). f_score is independent of market cap and is kept.
+    def _implausible(v, limit):
+        return v is not None and abs(v) > limit
+    if _implausible(bm, 25.0) or _implausible(ey, 3.0) or _implausible(cy, 3.0) or _implausible(sy, 50.0):
+        market_cap = None
+        bm = ey = cy = sy = None
+    return {
+        "market_cap": market_cap,
+        "book_to_market": bm,
+        "earnings_yield": ey,
+        "cashflow_yield": cy,
+        "sales_yield": sy,
+        # f_score is meaningful only when at least one signal was evaluable.
+        "f_score": int(fs) if fs_eval > 0 else None,
+        "f_score_evaluable": int(fs_eval),
+    }
+
+
 def _compute_snapshot_rows(
     prices: pd.DataFrame,
     liquid: set[str],
@@ -402,12 +465,14 @@ def _compute_snapshot_rows(
             float(high.tail(22).max() - atr * 3.0) if len(high) >= 22 else None
         )
         profile = profiles.get(str(ticker), {})
+        value_fields = _value_row_fields(profile, float(close.iloc[-1]))
         rows.append(
             {
                 "ticker": str(ticker),
                 "name": profile.get("name", str(ticker)),
                 "sector": profile.get("sector", "Unclassified"),
                 "close": float(close.iloc[-1]),
+                **value_fields,
                 "high": float(high.iloc[-1]),
                 "low": float(low.iloc[-1]),
                 "volume": int(volume.iloc[-1]),
@@ -637,13 +702,15 @@ def _edgar_profiles(tickers: list[str]) -> dict[str, dict[str, Any]]:
         path = EDGAR_CACHE_DIR / f"{ticker}.json"
         quality: dict[str, Any] = {}
         sector = "Unclassified"
+        value: dict[str, Any] = {}
         if path.exists():
             try:
                 slim = json.loads(path.read_text(encoding="utf-8"))
                 quality = loader.quality_metrics_as_of(ticker, today, payload=slim)
+                value = loader.value_metrics_as_of(ticker, today, payload=slim)
                 sector = mapper.get_sector(slim.get("sic"))
             except Exception:
-                quality, sector = {}, "Unclassified"
+                quality, value, sector = {}, {}, "Unclassified"
         warm = warm_profiles.get(ticker, {})
         if sector == "Unclassified" and warm.get("sector"):
             sector = str(warm["sector"])
@@ -668,6 +735,10 @@ def _edgar_profiles(tickers: list[str]) -> dict[str, dict[str, Any]]:
             # asset_growth is EDGAR-only (the warm profile cache doesn't store it);
             # missing -> the strategy's AG gate fails open.
             "asset_growth": quality.get("asset_growth"),
+            # Point-in-time value-composite + Piotroski inputs (EDGAR-only). Empty
+            # for names whose slim cache predates the value tags — the value
+            # strategy then records skipped gates rather than guessing.
+            "value_metrics": value,
         }
     return out
 
@@ -801,8 +872,10 @@ def refresh_reference_thresholds(as_of_date: str | None = None) -> dict:
     alongside prices; read by the strategy's _apply_cross_sectional_gates."""
     from ..strategies._helpers.reference_thresholds import (
         compute_thresholds,
+        compute_value_composite_threshold,
         save_reference_thresholds,
     )
+    from ..strategies._helpers.value_composite import compute_value_composite
     from ..strategies.midterm_52w_high_momentum import PARAMETERS
 
     overrides = normalize_shariah_overrides(
@@ -818,8 +891,31 @@ def refresh_reference_thresholds(as_of_date: str | None = None) -> dict:
     gp_pct = float(PARAMETERS["min_gp_assets_percentile"].default)
     ag_pct = float(PARAMETERS["max_asset_growth_percentile"].default)
     gp_threshold, ag_threshold = compute_thresholds(universe, gp_pct, ag_pct)
+
+    # Value-composite cut over the SAME reference universe, so a name's cheapness
+    # verdict is stable across screen / analyze / candidate detail (research D3).
+    value_threshold: float | None = None
+    try:
+        from ..strategies.midterm_value_composite import (
+            PARAMETERS as VALUE_PARAMETERS,
+        )
+
+        ranked = compute_value_composite(
+            universe,
+            within_sector=bool(VALUE_PARAMETERS["within_sector_ranking"].default),
+        )
+        value_threshold = compute_value_composite_threshold(
+            ranked, float(VALUE_PARAMETERS["composite_top_percentile"].default)
+        )
+    except Exception:
+        value_threshold = None
+
     return save_reference_thresholds(
-        gp_threshold, ag_threshold, universe_size=int(len(universe)), as_of=data_as_of
+        gp_threshold,
+        ag_threshold,
+        universe_size=int(len(universe)),
+        as_of=data_as_of,
+        value_composite_threshold=value_threshold,
     )
 
 
@@ -957,12 +1053,29 @@ def run_strategy(
                     f"fundamentals missing for {missing_fund}/{len(universe)} names"
                     " in the screened universe (those names cannot pass the quality gate)"
                 )
+        # Value strategy: report how many names lack the point-in-time value inputs
+        # (their composite/F-Score gates are skipped, so the screen silently shrinks).
+        if strategy_slug == "midterm_value_composite" and "f_score_evaluable" in universe.columns:
+            no_value = int(
+                (pd.to_numeric(universe["f_score_evaluable"], errors="coerce").fillna(0) == 0).sum()
+            )
+            if no_value:
+                data_notes.append(
+                    f"value fundamentals missing for {no_value}/{len(universe)} names"
+                    " (no Piotroski/value-yield inputs — likely the EDGAR slim cache"
+                    " predates the value concepts; run the backtest re-slim or"
+                    " scripts/refresh to populate them)"
+                )
         # Per-run sector-strength gate toggle (UI option): forward the requested
         # fraction to the strategy via attrs (1.0 = off; 0<f<1 = keep top f sectors).
         if parameters_snapshot.get("sector_strength_top_fraction") is not None:
             universe.attrs["sector_strength_top_fraction"] = parameters_snapshot[
                 "sector_strength_top_fraction"
             ]
+        # Per-run value momentum-floor toggle (UI option): forward the requested
+        # 12-1 momentum floor to the value strategy via attrs (<= -1.0 = off).
+        if parameters_snapshot.get("min_momentum_12_1") is not None:
+            universe.attrs["min_momentum_12_1"] = parameters_snapshot["min_momentum_12_1"]
         results = strategy.rules(universe)
         data_notes.extend(results.attrs.get("gates_skipped", []))
         if not results.empty and {"score", "ticker"}.issubset(results.columns):
@@ -1093,6 +1206,23 @@ def run_strategy(
                 fcf_ttm=_opt_float(getattr(row, "fcf_ttm", None)),
                 gp_to_assets=_opt_float(getattr(row, "gp_to_assets", None)),
                 asset_growth=_opt_float(getattr(row, "asset_growth", None)),
+                value_composite=_opt_float(getattr(row, "value_composite", None)),
+                book_to_market=_opt_float(getattr(row, "book_to_market", None)),
+                earnings_yield=_opt_float(getattr(row, "earnings_yield", None)),
+                cashflow_yield=_opt_float(getattr(row, "cashflow_yield", None)),
+                sales_yield=_opt_float(getattr(row, "sales_yield", None)),
+                f_score=(
+                    int(_fs)
+                    if (_fs := getattr(row, "f_score", None)) is not None
+                    and pd.notna(_fs)
+                    else None
+                ),
+                f_score_evaluable=(
+                    int(_fe)
+                    if (_fe := getattr(row, "f_score_evaluable", None)) is not None
+                    and pd.notna(_fe)
+                    else None
+                ),
                 gate_results=getattr(row, "gate_results", None) or [],
                 warnings=list(getattr(row, "warnings", None) or []),
                 shariah_compliant=(

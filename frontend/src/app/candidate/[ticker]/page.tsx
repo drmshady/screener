@@ -6,6 +6,7 @@ import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidatePriceChart } from '@/components/ChartPanels';
 import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
 import { ShariahBadge } from '@/components/ShariahBadge';
+import { supportsAdvisorPrompt } from '@/lib/advisorPrompt';
 import { eventTerm } from '@/lib/events';
 import { formatMoney } from '@/lib/format';
 import {
@@ -278,8 +279,12 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                 >
                   {addingPortfolio[sizingKey] ? 'Adding...' : 'Add to portfolio'}
                 </button>
-                {(match.strategy_slug ?? 'midterm_52w_high_momentum') === 'midterm_52w_high_momentum' ? (
-                  <CopyAdvisorPrompt ticker={detail.ticker} asOf={detail.data_as_of?.slice(0, 10)} />
+                {supportsAdvisorPrompt(match.strategy_slug ?? 'midterm_52w_high_momentum') ? (
+                  <CopyAdvisorPrompt
+                    ticker={detail.ticker}
+                    asOf={detail.data_as_of?.slice(0, 10)}
+                    strategy={match.strategy_slug ?? 'midterm_52w_high_momentum'}
+                  />
                 ) : null}
               </div>
               {sizingState?.error ? (

@@ -93,6 +93,15 @@ class Candidate(BaseModel):
     fcf_ttm: Optional[float] = None
     gp_to_assets: Optional[float] = None
     asset_growth: Optional[float] = None
+    # Value-composite diagnostics (midterm_value_composite). Optional/None for
+    # other strategies so existing responses and contracts are unaffected.
+    value_composite: Optional[float] = None
+    book_to_market: Optional[float] = None
+    earnings_yield: Optional[float] = None
+    cashflow_yield: Optional[float] = None
+    sales_yield: Optional[float] = None
+    f_score: Optional[int] = None
+    f_score_evaluable: Optional[int] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     shariah_compliant: Optional[bool] = None
@@ -146,6 +155,13 @@ class AnalyzeResponse(BaseModel):
     fcf_ttm: Optional[float] = None
     gp_to_assets: Optional[float] = None
     asset_growth: Optional[float] = None
+    value_composite: Optional[float] = None
+    book_to_market: Optional[float] = None
+    earnings_yield: Optional[float] = None
+    cashflow_yield: Optional[float] = None
+    sales_yield: Optional[float] = None
+    f_score: Optional[int] = None
+    f_score_evaluable: Optional[int] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     data_notes: List[str] = Field(default_factory=list)
     data_as_of: str

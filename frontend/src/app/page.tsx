@@ -22,6 +22,13 @@ export default function Home() {
           <div className="text-lg font-semibold text-slate-950">Mid-Term 52-Week High Momentum</div>
           <p className="mt-2 text-sm text-slate-600">Default MVP screen with entries, stops, targets, citations, and backtest evidence.</p>
         </Link>
+        <Link
+          className="panel p-5 hover:border-slate-400"
+          href="/screen/midterm_value_composite"
+        >
+          <div className="text-lg font-semibold text-slate-950">Mid-Term Value Composite</div>
+          <p className="mt-2 text-sm text-slate-600">Cheapness screen (book/market, earnings, cash-flow, sales yields) gated by the Piotroski F-Score, with entries, stops, targets, citations, and backtest evidence.</p>
+        </Link>
         <Link className="panel p-5 hover:border-slate-400" href="/screen/shortterm_minervini_vcp">
           <div className="text-lg font-semibold text-slate-950">Short-Term Minervini VCP</div>
           <p className="mt-2 text-sm text-slate-600">Volatility-contraction screen with pivot, stop, target, citations, and backtest evidence.</p>

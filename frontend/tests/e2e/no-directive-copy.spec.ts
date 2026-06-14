@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 const ROUTES = [
   '/',
   '/screen/midterm_52w_high_momentum',
+  '/screen/midterm_value_composite',
   '/analyze',
   '/candidate/HFRO',
   '/watchlist',

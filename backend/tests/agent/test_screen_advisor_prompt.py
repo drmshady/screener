@@ -8,9 +8,16 @@ from backend.src.models.strategy import Candidate, GateResult, ScreenResult
 FAIL_SURV = {"confirmed": True, "passed": False, "note": "no delisted tickers in the free bundle"}
 
 
-def _candidate(ticker: str, rank: int, *, skipped: bool = False) -> Candidate:
+def _candidate(
+    ticker: str, rank: int, *, skipped: bool = False, sector_status: str = "skipped"
+) -> Candidate:
     gates = [
         GateResult(gate="52-week-high proximity", status="pass", detail="1.0% below high"),
+        GateResult(
+            gate="Sector strength",
+            status=sector_status,
+            detail="leading sector" if sector_status == "pass" else "sector gate not applied",
+        ),
         GateResult(
             gate="Low asset growth",
             status="skipped" if skipped else "pass",
@@ -117,3 +124,41 @@ def test_batch_endpoint_runs_and_returns_prompt(client):
 def test_batch_endpoint_unknown_strategy_404(client):
     resp = client.post("/strategies/not_a_strategy/advisor-prompt", json={})
     assert resp.status_code == 404
+
+
+def _screen_with(params: dict, cands) -> ScreenResult:
+    return ScreenResult(
+        id="s",
+        strategy_slug="midterm_52w_high_momentum",
+        as_of_date="2026-06-12",
+        parameters_snapshot=params,
+        filters_snapshot={},
+        candidate_count=len(cands),
+        candidates=cands,
+        computed_at="2026-06-12T00:00:00Z",
+        data_as_of="2026-06-12T00:00:00Z",
+        disclaimer="info only.",
+        regime="Trending up",
+    )
+
+
+def test_sector_gate_off_is_config_not_data_gap(midterm_strategy):
+    # Default run: sector_strength_top_fraction absent -> gate OFF; sector strength
+    # shows SKIPPED but must NOT be flagged as a data gap.
+    screen = _screen_with({}, [_candidate("AAA", 1, sector_status="skipped")])
+    prompt = build_screen_advisor_prompt(screen, midterm_strategy, survivorship=FAIL_SURV)
+    assert "Sector-strength gate: OFF" in prompt
+    # the inline data-gaps line, if present, must not include Sector strength
+    for line in prompt.splitlines():
+        if line.startswith("- Data gaps (skipped"):
+            assert "Sector strength" not in line
+
+
+def test_sector_gate_on_is_disclosed_and_filtered(midterm_strategy):
+    screen = _screen_with(
+        {"sector_strength_top_fraction": 0.5},
+        [_candidate("AAA", 1, sector_status="pass")],
+    )
+    prompt = build_screen_advisor_prompt(screen, midterm_strategy, survivorship=FAIL_SURV)
+    assert "Sector-strength gate: ON" in prompt
+    assert "top 50%" in prompt

@@ -4,11 +4,19 @@ This is the file that keeps the advisor honest. Every limitation below is real
 and current. Surface the relevant ones whenever they bear on an answer — do not
 wait to be asked.
 
+> **Applies to BOTH mid-term strategies.** Momentum and value are *both*
+> enabled by operator override with a failing survivorship check; everything in
+> this file applies to whichever strategy is in scope. Differences are flagged
+> inline.
+
 ## 1. The backtest FAILS its survivorship-bias check (most important)
 
-- The strategy is enabled by an **operator override**
-  (`SCREENER_TREAT_STRATEGY_VALID`), *not* because it passed the constitution's
-  gates. Its backtest's `survivorship_bias` check is **failing**.
+- The strategy is enabled by an **operator override** (momentum:
+  `SCREENER_TREAT_STRATEGY_VALID`; value: `SCREENER_VALUE_TREAT_AS_VALID`),
+  *not* because it passed the constitution's gates. Its backtest's
+  `survivorship_bias` check is **failing**. (For value, the backtest artifact may
+  not even exist yet — in which case survivorship shows as UNCONFIRMED, which is
+  *not better* than FAILED; treat any value performance claim as unverified.)
 - **Why:** the free Stooq daily-bar bundle contains **no delisted tickers**.
   Companies that went to zero or got acquired are missing from history, so the
   backtest only ever "traded" survivors.
@@ -22,21 +30,43 @@ wait to be asked.
 When a fundamental is missing, these gates pass the name through rather than
 reject it — so a "pass" can mean "we had no data," not "it genuinely passed":
 
+**Momentum (`midterm_52w_high_momentum`):**
+
 - **Low asset-growth gate** — point-in-time asset growth is sparse; missing ⇒
   passes through.
 - **Volume confirmation** — missing recent/50-day volume ⇒ passes through.
 - **Quality screen** — a name with missing `debt_to_equity` or `fcf_ttm` is not
   evaluated on that gate.
 
+A momentum name can look like it "cleared everything" while actually only
+clearing the 52-week-high proximity gate on thin data.
+
+**Value (`midterm_value_composite`):**
+
+- **Leverage sanity** — missing `debt_to_equity` ⇒ passes through.
+- **BUT the F-Score gate does the opposite — it FAILS CLOSED.** A name with no
+  point-in-time financials can't be scored and is **excluded** (the value-trap
+  filter refuses to vouch for an unscoreable name). So a value match that
+  survived *did* get scored — but check **how many of the 9 signals were
+  evaluable** and **how many of the 4 yields** built its composite. Few of
+  either = low confidence, even though it "passed."
+
 If the user's pasted gate breakdown shows `skipped` or "passed-through," call it
-out. A name can look like it "cleared everything" while actually only clearing
-the 52-week-high proximity gate on thin data.
+out either way.
 
-## 3. Gross-profitability is "top half of the screened universe"
+## 3. Cross-sectional gates are universe-relative, not absolute
 
-The gp/assets and asset-growth gates are **cross-sectional** — "top/bottom half"
-is relative to the universe being screened that day, not an absolute threshold.
-The same stock can pass or fail depending on what else is in the universe.
+Several gates rank a name *against the rest of the universe that day*, so the
+same stock can pass or fail depending on what else is screened:
+
+- **Momentum:** the gp/assets and asset-growth gates are "top/bottom half" of
+  the screened universe.
+- **Value:** the composite is built from **cross-sectional percentile ranks** of
+  each yield, and the cheapness cut ("cheapest top half") is a universe quantile
+  (or a cached reference-universe threshold). A value composite of 0.80 means
+  "cheaper than ~80% of peers in this run," not an absolute cheapness. With
+  `within_sector_ranking` on, that percentile is **within the name's sector** —
+  so "cheap" means cheap *relative to its sector peers*, which is the point.
 
 ## 4. Data sources & freshness
 
@@ -50,12 +80,17 @@ The same stock can pass or fail depending on what else is in the universe.
 
 ## 5. What this strategy is NOT good for
 
-- **Not** day-trading or scalping (it's a 60–180 day holding strategy).
+- **Not** day-trading or scalping (both are 60–180 day holding strategies).
 - **Not** multi-year buy-and-hold (out of scope per the project constitution).
-- **Not** reliable in a "Trending down" regime — momentum crashes happen exactly
-  on the snap-back from a downtrend.
-- **Not** a guarantee. Anchoring/underreaction is a statistical edge across many
-  names, not a promise about any single stock.
+- **Regime-specific (they differ!):** *Momentum* is **Unfavorable** in a
+  "Trending down" regime — momentum crashes happen on the snap-back from a
+  downtrend. *Value* treats a downtrend as **Neutral** (it deliberately enters
+  weakness) and is strongest **Range-bound**; its risk is the opposite — a
+  **value trap** that stays cheap or gets cheaper, which is exactly what the
+  F-Score gate tries to filter.
+- **Not** a guarantee. The momentum (anchoring/underreaction) and value
+  (mispricing/mean-reversion) edges are statistical, across many names — not a
+  promise about any single stock.
 
 ## 6. The advisor cannot compute — it interprets
 

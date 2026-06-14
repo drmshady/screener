@@ -21,6 +21,7 @@ from ..screening.engine import (
 )
 from ..shariah.lookup import normalize_shariah_overrides
 from ..strategies import midterm_52w_high_momentum as midterm
+from ..strategies import midterm_value_composite as value
 from ..strategies._registry import registry
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
@@ -73,6 +74,26 @@ def _overlay_edgar(snapshot: pd.DataFrame, symbol: str, as_of: str) -> None:
             snapshot.at[idx, key] = q.get(key)
 
 
+def _overlay_edgar_value(snapshot: pd.DataFrame, symbol: str, as_of: str) -> None:
+    """Fill point-in-time EDGAR value-composite + Piotroski inputs onto the
+    single-ticker row (the yfinance profile path that builds single-ticker
+    snapshots doesn't compute them). Only fills missing cells; never clobbers."""
+    try:
+        vm = FundamentalsLoader().value_metrics_as_of(
+            symbol, date.fromisoformat(as_of[:10])
+        )
+    except Exception:
+        return
+    from ..screening.engine import _value_row_fields
+
+    idx = snapshot.index[0]
+    fields = _value_row_fields({"value_metrics": vm}, float(snapshot.at[idx, "close"]))
+    for key, val in fields.items():
+        cur = snapshot.at[idx, key] if key in snapshot.columns else None
+        if (cur is None or pd.isna(cur)) and val is not None:
+            snapshot.at[idx, key] = val
+
+
 def compute_candidate_result(
     ticker: str,
     strategy: str = "midterm_52w_high_momentum",
@@ -87,10 +108,10 @@ def compute_candidate_result(
     registered = registry.get(strategy)
     if registered is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    if strategy != "midterm_52w_high_momentum":
+    if strategy not in ("midterm_52w_high_momentum", "midterm_value_composite"):
         raise HTTPException(
             status_code=400,
-            detail="Single-ticker analysis is currently available for the midterm 52-week-high strategy",
+            detail="Single-ticker analysis is currently available for the mid-term strategies",
         )
 
     symbol = ticker.strip().upper()
@@ -98,6 +119,11 @@ def compute_candidate_result(
         snapshot, data_as_of, data_notes = build_single_ticker_snapshot(symbol, as_of=as_of)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if strategy == "midterm_value_composite":
+        return _compute_value_candidate_result(
+            symbol, snapshot, data_as_of, data_notes, as_of
+        )
 
     _overlay_edgar(snapshot, symbol, data_as_of)
     row = snapshot.iloc[0]
@@ -180,6 +206,88 @@ def compute_candidate_result(
     )
 
 
+def _compute_value_candidate_result(
+    symbol: str,
+    snapshot: pd.DataFrame,
+    data_as_of: str,
+    data_notes: list[str],
+    as_of: str | None,
+) -> AnalyzeResponse:
+    """Single-ticker path for midterm_value_composite. The value composite and
+    F-Score gates are evaluated against the live universe distribution so they are
+    not silently skipped for one symbol (FR-009)."""
+    _overlay_edgar_value(snapshot, symbol, data_as_of)
+    row = snapshot.iloc[0]
+    levels = value.derive_levels(row)
+    if (
+        levels["entry"] is None
+        or levels["stop_loss"] is None
+        or levels["take_profit"] is None
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"Not enough indicator data to analyze {symbol}"
+        )
+
+    universe = _market_universe(symbol, as_of)
+    if not universe.empty:
+        others = universe[universe["ticker"].astype(str).str.upper() != symbol]
+        combined = pd.concat([others, snapshot], ignore_index=True)
+        combined, threshold = value.prepare_universe_gates(combined)
+        eval_row = combined[combined["ticker"].astype(str).str.upper() == symbol].iloc[0]
+        context = value.evaluation_context(combined, composite_threshold=threshold)
+        gate_results = value.evaluate(eval_row, context)
+        data_notes.append(
+            f"value-composite and Piotroski gates evaluated against the {len(combined)}-name"
+            f" {'Saudi' if symbol.endswith('.SR') else 'compliant US'} universe"
+        )
+    else:
+        prepared, threshold = value.prepare_universe_gates(snapshot)
+        eval_row = prepared.iloc[0]
+        context = value.evaluation_context(
+            prepared, composite_threshold=threshold, single_ticker=True
+        )
+        gate_results = value.evaluate(eval_row, context)
+        data_notes.append(
+            "value-composite percentile gate needs a full universe context and is"
+            " skipped (universe snapshot unavailable)"
+        )
+
+    would_be_selected = not any(gate["status"] == "fail" for gate in gate_results)
+    f_score = eval_row.get("f_score")
+    f_eval = eval_row.get("f_score_evaluable")
+    return AnalyzeResponse(
+        ticker=symbol,
+        name=str(row.get("name", symbol)),
+        sector=str(row.get("sector", "Unclassified")),
+        strategy="midterm_value_composite",
+        as_of=data_as_of[:10],
+        would_be_selected=would_be_selected,
+        current_price=f"{float(row['close']):.2f}",
+        entry=f"{float(levels['entry']):.2f}",
+        stop_loss=f"{max(float(levels['stop_loss']), 0.01):.2f}",
+        tighter_stop_loss=(
+            f"{max(float(levels['tighter_stop_loss']), 0.01):.2f}"
+            if levels["tighter_stop_loss"] is not None
+            else None
+        ),
+        take_profit=f"{float(levels['take_profit']):.2f}",
+        atr=_as_float(row.get("atr")),
+        debt_to_equity=_as_float(eval_row.get("debt_to_equity")),
+        fcf_ttm=_as_float(eval_row.get("fcf_ttm")),
+        value_composite=_as_float(eval_row.get("value_composite")),
+        book_to_market=_as_float(eval_row.get("book_to_market")),
+        earnings_yield=_as_float(eval_row.get("earnings_yield")),
+        cashflow_yield=_as_float(eval_row.get("cashflow_yield")),
+        sales_yield=_as_float(eval_row.get("sales_yield")),
+        f_score=int(f_score) if f_score is not None and not pd.isna(f_score) else None,
+        f_score_evaluable=int(f_eval) if f_eval is not None and not pd.isna(f_eval) else None,
+        gate_results=gate_results,
+        data_notes=data_notes,
+        data_as_of=data_as_of,
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
 @router.get("/{ticker}", response_model=AnalyzeResponse)
 def analyze_ticker(
     ticker: str,
@@ -213,7 +321,7 @@ def advisor_prompt(
     prompt = build_advisor_prompt(
         result,
         registered,
-        survivorship=load_survivorship_status(),
+        survivorship=load_survivorship_status(slug=strategy),
         regime=_current_regime_name(as_of),
         directive=directive,
     )

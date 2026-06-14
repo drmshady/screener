@@ -1,10 +1,28 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/005-value-midterm-strategy/plan.md` (active feature 005), which builds
-on the 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
+`specs/006-midterm-sidebyside-compare/plan.md` (active feature 006), which builds
+on the 005 value strategy, 004 advisor export, 003 comparison, 002 validation,
+and 001 MVP below.
 
-## Active feature: 005-value-midterm-strategy
+## Active feature: 006-midterm-sidebyside-compare
+
+Add a **live-screen, four-variant side-by-side run** for the mid-term band plus a
+**single four-variant advisor-prompt export**. In one action it runs both
+mid-term strategies twice against one shared universe snapshot, toggling the one
+A/B parameter each: momentum sector gate ON/OFF (`sector_strength_top_fraction`
+0.5 vs 1.0) and value momentum floor ON/OFF (`min_momentum_12_1` -0.20 vs -1.0).
+Orchestration + presentation only — **no strategy rule, default, or backtest
+baseline changes**. Both toggles already thread through `run_strategy(parameters)`
+→ `universe.attrs`. New work: a shared-snapshot matrix runner (build universe
+once, evaluate four `rules()`), two endpoints (`POST /strategies/midterm-compare`
+and `…/advisor-prompt`), a `build_midterm_matrix_advisor_prompt` reusing the
+existing per-screen section builders, and a `/compare/midterm` frontend surface.
+Distinct from 003 (which is a *backtest* bake-off, not a live screen). Each
+strategy's failing survivorship bias-check is surfaced honestly per variant. Plan:
+`specs/006-midterm-sidebyside-compare/plan.md`.
+
+## Prior feature: 005-value-midterm-strategy
 
 Add a second fully-gated **mid-term strategy** based on value:
 `midterm_value_composite`. It ranks the liquid universe by a multi-metric value
@@ -96,7 +114,14 @@ capital-aware position sizing.
   default ON + Chandelier Exit trailing stop). A CAN SLIM-style strategy is
   intentionally deferred — do not ship a "lite" version under O'Neil's
   citation; build it properly when the Form 4 and analyst-revision data
-  pipelines exist.
+  pipelines exist. Feature 005 adds a fourth, value-based mid-term strategy
+  `midterm_value_composite` (multi-metric value composite — book/market,
+  earnings, cash-flow, sales yields — gated by a Piotroski (2000) F-Score and
+  ranked within sector). Like momentum it ships disabled-by-default while the
+  free Stooq archive's survivorship check fails (override:
+  `SCREENER_VALUE_TREAT_AS_VALID=1`). New point-in-time inputs come from
+  `FundamentalsLoader.value_metrics_as_of`; its indicators live in
+  `indicators/valuation.py` + `indicators/piotroski.py` (golden-fixture tested).
 - Universe-wide liquidity gate (research.md Decision 14, FR-034) applies
   before any strategy runs: ADV ≥ $1M (20d), price ≥ $5. User-configurable.
 - Backtest-window discipline (research.md Decision 15, FR-035, SC-017):

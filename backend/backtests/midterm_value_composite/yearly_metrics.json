@@ -1,0 +1,155 @@
+[
+  {
+    "year": 2008,
+    "trades": 0,
+    "hit_rate": 0.0,
+    "avg_win": 0.0,
+    "avg_loss": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0
+  },
+  {
+    "year": 2009,
+    "trades": 0,
+    "hit_rate": 0.0,
+    "avg_win": 0.0,
+    "avg_loss": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0
+  },
+  {
+    "year": 2010,
+    "trades": 0,
+    "hit_rate": 0.0,
+    "avg_win": 0.0,
+    "avg_loss": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0
+  },
+  {
+    "year": 2011,
+    "trades": 10,
+    "hit_rate": 0.6,
+    "avg_win": 0.04596670819250015,
+    "avg_loss": 0.13233701216967458,
+    "total_return": -0.025354779952369743,
+    "max_drawdown": 0.23925621194668423
+  },
+  {
+    "year": 2012,
+    "trades": 10,
+    "hit_rate": 0.5,
+    "avg_win": 0.11103180626745113,
+    "avg_loss": 0.17770250607342253,
+    "total_return": -0.0333353499029857,
+    "max_drawdown": 0.5863309352517986
+  },
+  {
+    "year": 2013,
+    "trades": 10,
+    "hit_rate": 0.9,
+    "avg_win": 0.3193858753060076,
+    "avg_loss": 0.1388824451321976,
+    "total_return": 0.27355904326218705,
+    "max_drawdown": 0.1388824451321976
+  },
+  {
+    "year": 2014,
+    "trades": 10,
+    "hit_rate": 0.8,
+    "avg_win": 0.11145839691256723,
+    "avg_loss": 0.14253434831699674,
+    "total_return": 0.06065984786665444,
+    "max_drawdown": 0.28007889546351095
+  },
+  {
+    "year": 2015,
+    "trades": 10,
+    "hit_rate": 0.5,
+    "avg_win": 0.18245378414578442,
+    "avg_loss": 0.13379685811203723,
+    "total_return": 0.02432846301687359,
+    "max_drawdown": 0.15178323512171044
+  },
+  {
+    "year": 2016,
+    "trades": 10,
+    "hit_rate": 1.0,
+    "avg_win": 0.31004873137553524,
+    "avg_loss": 0.0,
+    "total_return": 0.31004873137553524,
+    "max_drawdown": 0.0
+  },
+  {
+    "year": 2017,
+    "trades": 10,
+    "hit_rate": 0.6,
+    "avg_win": 0.13723254991328226,
+    "avg_loss": 0.17810739375778675,
+    "total_return": 0.011096572444854657,
+    "max_drawdown": 0.38170121515368116
+  },
+  {
+    "year": 2018,
+    "trades": 10,
+    "hit_rate": 0.6,
+    "avg_win": 0.5388178206121363,
+    "avg_loss": 0.11508720042818049,
+    "total_return": 0.2772558121960097,
+    "max_drawdown": 0.147319014077825
+  },
+  {
+    "year": 2019,
+    "trades": 10,
+    "hit_rate": 0.6,
+    "avg_win": 0.10095623958211646,
+    "avg_loss": 0.23569040106184866,
+    "total_return": -0.033702416675469596,
+    "max_drawdown": 0.555337904015671
+  },
+  {
+    "year": 2020,
+    "trades": 10,
+    "hit_rate": 0.5,
+    "avg_win": 0.3061096216832384,
+    "avg_loss": 0.33512185192455607,
+    "total_return": -0.014506115120658825,
+    "max_drawdown": 0.5893780448304811
+  },
+  {
+    "year": 2021,
+    "trades": 10,
+    "hit_rate": 1.0,
+    "avg_win": 0.26579745024336876,
+    "avg_loss": 0.0,
+    "total_return": 0.26579745024336876,
+    "max_drawdown": 0.0
+  },
+  {
+    "year": 2022,
+    "trades": 10,
+    "hit_rate": 0.1,
+    "avg_win": 0.1411441418935797,
+    "avg_loss": 0.13397362689310924,
+    "total_return": -0.10646185001444035,
+    "max_drawdown": 0.17961701204843572
+  },
+  {
+    "year": 2023,
+    "trades": 10,
+    "hit_rate": 0.5,
+    "avg_win": 0.14995633486061272,
+    "avg_loss": 0.3329892123007389,
+    "total_return": -0.0915164387200631,
+    "max_drawdown": 0.666044776119403
+  },
+  {
+    "year": 2024,
+    "trades": 10,
+    "hit_rate": 0.7,
+    "avg_win": 0.15805807164144353,
+    "avg_loss": 0.07366940234618669,
+    "total_return": 0.08853982944515447,
+    "max_drawdown": 0.09402390438247021
+  }
+]

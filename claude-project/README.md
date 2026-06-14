@@ -1,11 +1,17 @@
-# Claude Project: Mid-Term 52-Week-High Momentum — Strategy Advisor
+# Claude Project: Mid-Term Strategy Advisor
 
 This folder is everything you need to stand up a **Claude Project** (claude.ai
-or Claude Desktop) that acts as an expert, honest advisor for the
-`midterm_52w_high_momentum` strategy in this screener.
+or Claude Desktop) that acts as an expert, honest advisor for the **two mid-term
+strategies** in this screener:
+
+- `midterm_52w_high_momentum` — 52-week-high momentum (George & Hwang 2004)
+- `midterm_value_composite` — multi-metric value, F-Score gated (Fama & French
+  1992; Lakonishok, Shleifer & Vishny 1994; Piotroski 2000)
 
 All facts here are pulled directly from
-`backend/src/strategies/midterm_52w_high_momentum.py` and the project
+`backend/src/strategies/midterm_52w_high_momentum.py`,
+`backend/src/strategies/midterm_value_composite.py`, the
+`indicators/valuation.py` + `indicators/piotroski.py` modules, and the project
 constitution. If the code changes, re-sync these files (see "Keeping it honest"
 below).
 
@@ -17,12 +23,16 @@ below).
    the project's **Custom instructions** box. (This is the persona + the rules
    it must obey — it is *not* a knowledge file.)
 3. Upload the remaining files as **Project knowledge**:
-   - `01-strategy-rules.md`
-   - `02-modifications-and-citations.md`
-   - `03-honesty-and-limitations.md`
-   - `04-workflow-and-prompts.md`
+   - `01-strategy-rules.md` *(momentum rules)*
+   - `02-modifications-and-citations.md` *(momentum modifications)*
+   - `03-honesty-and-limitations.md` *(shared — applies to both strategies)*
+   - `04-workflow-and-prompts.md` *(shared — templates for both)*
+   - `05-value-strategy-rules.md` *(value rules)*
+   - `06-value-modifications-and-citations.md` *(value modifications + the 9
+     F-Score signals)*
 4. Start a chat in the project. Use the prompt templates in
-   `04-workflow-and-prompts.md`.
+   `04-workflow-and-prompts.md` — there's one per strategy. The advisor picks the
+   right knowledge files from the `Strategy:` line in your pasted prompt.
 
 ## The one rule that makes this honest
 
@@ -44,8 +54,11 @@ back to neutral "analyst" framing and remove the directive permission.
 
 ## Keeping it honest (re-sync)
 
-These files are a snapshot of the code. After any change to the strategy file,
-its parameters, modifications, or the backtest artifact, regenerate the
-affected file so the advisor isn't reasoning from stale rules. The
-survivorship-bias caveat in `03-honesty-and-limitations.md` stays until the
-backtest's `bias_check` actually passes (delisted tickers added).
+These files are a snapshot of the code. After any change to **either** strategy
+file, its parameters, modifications, or its backtest artifact, regenerate the
+affected file (`01`/`02` for momentum, `05`/`06` for value) so the advisor isn't
+reasoning from stale rules. The survivorship-bias caveat in
+`03-honesty-and-limitations.md` stays until each backtest's `bias_check`
+actually passes (delisted tickers added) — for value, the backtest artifact may
+not exist yet, so its survivorship is *unconfirmed*, which is no better than
+failed.

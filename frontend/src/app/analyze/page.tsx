@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Abbr } from '@/components/Abbr';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
+import { supportsAdvisorPrompt } from '@/lib/advisorPrompt';
 import {
   AnalyzeResponse,
   AnalyzeResponseSchema,
@@ -185,8 +186,8 @@ export default function AnalyzePage() {
                   </ul>
                 </div>
               ) : null}
-              {strategy === 'midterm_52w_high_momentum' ? (
-                <CopyAdvisorPrompt ticker={result.ticker} asOf={result.as_of} />
+              {supportsAdvisorPrompt(strategy) ? (
+                <CopyAdvisorPrompt ticker={result.ticker} asOf={result.as_of} strategy={strategy} />
               ) : null}
             </section>
 

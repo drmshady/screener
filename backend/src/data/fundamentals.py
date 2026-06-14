@@ -46,6 +46,58 @@ class FundamentalsLoader:
         return units.get("USD", []) or units.get("shares", []) or []
 
     @staticmethod
+    def _ns_facts(payload: dict[str, Any], namespace: str, tag: str) -> list[dict[str, Any]]:
+        """Facts for a tag under an arbitrary taxonomy namespace (e.g. ``dei``).
+        Share counts on modern filers live under ``dei``, not ``us-gaap``."""
+        units = payload.get("facts", {}).get(namespace, {}).get(tag, {}).get("units", {})
+        return units.get("shares", []) or units.get("USD", []) or []
+
+    # Max age (days) between a share count's period end and the as-of date before
+    # the count is considered stale. Pairing a years-old share count with current
+    # financials produces a wildly wrong market cap (the RTX 2009-shares bug), so
+    # a stale count is treated as missing rather than silently used.
+    _SHARES_MAX_STALE_DAYS = 450
+
+    def _shares_outstanding_as_of(
+        self, payload: dict[str, Any], as_of: date
+    ) -> float | None:
+        """Most recent reliable common-share count known on or before ``as_of``.
+
+        Prefers the dei cover-page count ``EntityCommonStockSharesOutstanding``
+        (full actual shares, reported on every 10-K/10-Q by modern filers), then
+        falls back to the us-gaap balance-sheet concepts. Any count whose period
+        end is more than ``_SHARES_MAX_STALE_DAYS`` before ``as_of`` is rejected
+        as stale (returns None) — never paired with newer financials.
+        """
+        sources = (
+            ("dei", "EntityCommonStockSharesOutstanding"),
+            # The slim EDGAR cache stores this concept under us-gaap, so check there
+            # too (some companyfacts payloads also mirror the dei cover-page count).
+            ("us-gaap", "EntityCommonStockSharesOutstanding"),
+            ("us-gaap", "CommonStockSharesOutstanding"),
+            ("us-gaap", "CommonStockSharesIssued"),
+        )
+        for namespace, tag in sources:
+            rows = [
+                row
+                for row in self._ns_facts(payload, namespace, tag)
+                if row.get("end")
+                and row.get("filed")
+                and row.get("val") is not None
+                and date.fromisoformat(row["filed"]) <= as_of
+            ]
+            if not rows:
+                continue
+            row = sorted(rows, key=lambda r: (r["end"], r["filed"]))[-1]
+            period_end = date.fromisoformat(row["end"])
+            if (as_of - period_end).days > self._SHARES_MAX_STALE_DAYS:
+                # This source only has a stale count; try the next source before
+                # giving up (a newer source may still carry a current count).
+                continue
+            return float(row["val"])
+        return None
+
+    @staticmethod
     def _latest_by_period(payload: dict[str, Any], tag: str, form: str) -> dict[str, Any] | None:
         rows = [
             row
@@ -172,6 +224,110 @@ class FundamentalsLoader:
         for row in sorted(rows, key=lambda r: (r["end"], r["filed"])):
             by_end[row["end"]] = row  # later filing for the same period end wins
         return [Decimal(str(by_end[end]["val"])) for end in sorted(by_end.keys())]
+
+    def _annual_values_as_of(
+        self, payload: dict[str, Any], tag: str, as_of: date, form: str = "10-K"
+    ) -> list[Decimal]:
+        """Annual values for one concept (ascending by period end) from filings
+        filed on or before `as_of`, deduped to the latest filing per period end.
+        Generalizes `_annual_assets_as_of` to any tag. Enforces no look-ahead."""
+        rows = [
+            row
+            for row in self._facts(payload, tag)
+            if row.get("form") == form
+            and row.get("end")
+            and row.get("filed")
+            and row.get("val") is not None
+            and date.fromisoformat(row["filed"]) <= as_of
+        ]
+        by_end: dict[str, dict[str, Any]] = {}
+        for row in sorted(rows, key=lambda r: (r["end"], r["filed"])):
+            by_end[row["end"]] = row  # later filing for the same period end wins
+        return [Decimal(str(by_end[end]["val"])) for end in sorted(by_end.keys())]
+
+    def _annual_revenue_as_of(
+        self, payload: dict[str, Any], as_of: date
+    ) -> list[Decimal]:
+        """Revenue annual series, preferring `Revenues` then the contract-revenue
+        tag (matches the fallbacks used elsewhere in this loader)."""
+        series = self._annual_values_as_of(payload, "Revenues", as_of)
+        if series:
+            return series
+        return self._annual_values_as_of(
+            payload, "RevenueFromContractWithCustomerExcludingAssessedTax", as_of
+        )
+
+    def value_metrics_as_of(
+        self, ticker: str, as_of: date, payload: dict[str, Any] | None = None
+    ) -> dict[str, float | None]:
+        """Point-in-time inputs for the value-composite yields AND the nine
+        Piotroski signals, using only EDGAR filings filed on or before `as_of`.
+
+        Returns the latest annual value of each concept plus its prior-year value
+        (prefixed ``prior_``) so the F-Score deltas can be computed. Every value is
+        a plain ``float`` or ``None`` (missing on/before the as-of date — never
+        fabricated). Market cap is NOT computed here (it needs the live price); the
+        caller multiplies ``shares_outstanding`` by the close.
+        """
+        payload = payload if payload is not None else self.fetch_company_facts(ticker)
+
+        # (current, prior) annual value for one concept, with optional fallback tags.
+        def pair(*tags: str) -> tuple[float | None, float | None]:
+            series: list[Decimal] = []
+            for tag in tags:
+                series = self._annual_values_as_of(payload, tag, as_of)
+                if series:
+                    break
+            current = float(series[-1]) if len(series) >= 1 else None
+            prior = float(series[-2]) if len(series) >= 2 else None
+            return current, prior
+
+        equity, prior_equity = pair("StockholdersEquity")
+        net_income, prior_net_income = pair("NetIncomeLoss")
+        operating_cf, prior_operating_cf = pair(
+            "NetCashProvidedByUsedInOperatingActivities"
+        )
+        assets, prior_assets = pair("Assets")
+        gross_profit, prior_gross_profit = pair("GrossProfit")
+        current_assets, prior_current_assets = pair("AssetsCurrent")
+        current_liabilities, prior_current_liabilities = pair("LiabilitiesCurrent")
+        long_term_debt, prior_long_term_debt = pair(
+            "LongTermDebtNoncurrent", "LongTermDebt"
+        )
+        # Shares for market cap: use the robust, staleness-guarded selector (dei
+        # cover-page count first). This fixes the bug where a years-stale us-gaap
+        # share count was paired with current financials → a 1000x-wrong market cap.
+        shares = self._shares_outstanding_as_of(payload, as_of)
+        # Prior-year shares (only feeds the F-Score dilution signal): best-effort
+        # annual us-gaap count, or None when unavailable (signal then scores as
+        # non-evaluable rather than wrong).
+        _, prior_shares = pair("CommonStockSharesOutstanding", "CommonStockSharesIssued")
+
+        rev_series = self._annual_revenue_as_of(payload, as_of)
+        revenue = float(rev_series[-1]) if len(rev_series) >= 1 else None
+        prior_revenue = float(rev_series[-2]) if len(rev_series) >= 2 else None
+
+        return {
+            "common_equity": equity,
+            "net_income": net_income,
+            "operating_cf": operating_cf,
+            "revenue": revenue,
+            "total_assets": assets,
+            "gross_profit": gross_profit,
+            "current_assets": current_assets,
+            "current_liabilities": current_liabilities,
+            "long_term_debt": long_term_debt,
+            "shares_outstanding": shares,
+            "prior_net_income": prior_net_income,
+            "prior_total_assets": prior_assets,
+            "prior_operating_cf": prior_operating_cf,
+            "prior_revenue": prior_revenue,
+            "prior_gross_profit": prior_gross_profit,
+            "prior_current_assets": prior_current_assets,
+            "prior_current_liabilities": prior_current_liabilities,
+            "prior_long_term_debt": prior_long_term_debt,
+            "prior_shares_outstanding": prior_shares,
+        }
 
     def quality_metrics_as_of(
         self, ticker: str, as_of: date, payload: dict[str, Any] | None = None

@@ -16,25 +16,45 @@ numbers from memory — it can't, and it shouldn't pretend to.
 > backend's personal-use flag `SCREENER_PERSONAL_USE_DIRECTIVE` (default **off** →
 > neutral framing). Turn it on only for your own single-user machine; never for a
 > shared or hosted instance (see [03-honesty-and-limitations.md](03-honesty-and-limitations.md)).
+>
+> The generated prompt works for **both mid-term strategies** — momentum
+> (`midterm_52w_high_momentum`) and value (`midterm_value_composite`). It already
+> carries the right strategy's gate breakdown, citations, and (for value) the
+> value composite, its metric count, and the Piotroski F-Score with its evaluable
+> count. The `Strategy:` line at the top tells you which one — read it first and
+> reason from the matching knowledge files.
 
 ## What to gather before asking
 
 For a single-candidate question, copy from your screener / single-ticker
-analysis:
+analysis. **Common to both strategies:** ticker, sector, as-of date, close, ATR,
+200-day SMA, 20-day low (for stops), market regime, and the per-gate
+`gate_results` breakdown if you have it; plus your account size and
+risk-per-trade % if you want sizing.
 
-- **Ticker, sector, as-of date**
-- **close**, **52-week high** (or `dist_to_high`)
-- **ATR**, **200-day SMA**, **20-day consolidation low** (for stops)
+**Momentum (`midterm_52w_high_momentum`) also wants:**
+
+- **52-week high** (or `dist_to_high`), **return_12_1** (12-1 momentum)
 - **debt_to_equity**, **fcf_ttm**, **gp_to_assets**, **asset_growth**
-- **return_12_1** (12-1 momentum), **recent vs 50-day volume ratio**
-- the per-gate **`gate_results`** breakdown if you have it (pass / warn /
-  skipped + detail)
-- current **market regime** (Trending up / Range-bound / Trending down)
-- your **account size** and **risk-per-trade %** if you want sizing
+- **recent vs 50-day volume ratio**
 
-The richer the paste, the fewer gates the advisor has to mark "unknown."
+**Value (`midterm_value_composite`) also wants:**
 
-## Template A — "Should I take this candidate?"
+- the **value composite** + how many of the **4 yields** built it
+  (`value_metrics_count`) — or the four raw yields (book/market, earnings,
+  cash-flow, sales)
+- the **Piotroski F-Score** + how many of the **9 signals were evaluable**
+- **debt_to_equity** (leverage sanity)
+- the name's **sector** (within-sector ranking depends on it)
+- **return_12_1** (12-1 momentum) — only needed if the **optional momentum
+  floor** variant is on (`min_momentum_12_1 > -1.0`, e.g. the `-0.20`
+  "not a falling knife" variant); the default pure-value screen ignores it
+
+The richer the paste, the fewer gates the advisor has to mark "unknown." For
+value, the **metric count and evaluable count matter as much as the scores** —
+always include them.
+
+## Template A — "Should I take this MOMENTUM candidate?"
 
 ```
 Strategy: midterm_52w_high_momentum. As-of: <date>. Regime: <regime>.
@@ -50,6 +70,31 @@ Account: $<x>, risk per trade: <x>%.
 Walk the gates in order, derive entry/stop/take-profit and reward:risk,
 give me a directive call with your confidence and the biggest risk, then the
 caveats. Stop mode: trend (default).
+```
+
+## Template A-value — "Should I take this VALUE candidate?"
+
+```
+Strategy: midterm_value_composite. As-of: <date>. Regime: <regime>.
+
+Ticker: <TKR> (<sector>)
+close: <x>   ATR: <x>   SMA200: <x>   20d_low: <x>
+value_composite: <x>   value_metrics_count: <n>/4
+  (or yields — book_to_market: <x>  earnings_yield: <x>
+   cashflow_yield: <x>  sales_yield: <x>)
+f_score: <n>/9   f_score_evaluable: <n>/9
+debt_to_equity: <x>
+min_momentum_12_1: <-1.0 if pure value, else floor e.g. -0.20>   return_12_1: <x>
+gate_results: <paste if available>
+
+Account: $<x>, risk per trade: <x>%.
+
+Walk the gates in order (composite → cheapness cut → F-Score → leverage →
+momentum floor (only if min_momentum_12_1 > -1.0) → within-sector cap). Note
+that SMA200 is the STOP only, not an entry filter.
+Derive entry/stop/take-profit and reward:risk using the 4R target, give me a
+directive call with confidence and the biggest risk (especially value-trap
+risk and how solid the F-Score / composite coverage is), then the caveats.
 ```
 
 ## Template B — "Explain why this name matched / didn't"

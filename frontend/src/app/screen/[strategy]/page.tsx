@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidateRow } from '@/components/CandidateRow';
 import { CopyScreenAdvisorPrompt } from '@/components/CopyScreenAdvisorPrompt';
+import { supportsAdvisorPrompt } from '@/lib/advisorPrompt';
 import { EquityCurveCharts } from '@/components/ChartPanels';
 import { StrategyGatesPanel } from '@/components/StrategyGatesPanel';
 import { WalkForwardMetricsPanel } from '@/components/WalkForwardMetricsPanel';
@@ -41,8 +42,17 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
   const [earningsWindowOverride, setEarningsWindowOverride] = useState<number | null>(null);
   // Sector-strength (industry-momentum) gate: off by default (lost the A/B on
   // returns); when on, keep only names in the top half of sectors by breadth.
+  // This is a momentum overlay, so the control only renders for that strategy.
   const [sectorGateOn, setSectorGateOn] = useState(false);
+  // Value-only falling-knife guard: off by default (pure value). When on, exclude
+  // names whose 12-1 month momentum is below the floor so the screen doesn't buy
+  // cheapness that is cheap *because* it is collapsing.
+  const [momentumFloorOn, setMomentumFloorOn] = useState(false);
   const settings = useAppStore((state) => state.settings);
+  const isMomentum = strategySlug === 'midterm_52w_high_momentum';
+  const isValue = strategySlug === 'midterm_value_composite';
+  // Floor applied when the value momentum guard is on; <= -1.0 means disabled.
+  const VALUE_MOMENTUM_FLOOR = -0.2;
 
   useEffect(() => {
     fetchApi(`/strategies/${strategySlug}`, StrategySchema).then(setStrategy);
@@ -62,13 +72,18 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
     const isSaudi = market === 'SA';
     // 1.0 disables the sector-strength gate; 0.5 keeps the top half of sectors.
     const sectorFraction = sectorGateOn ? 0.5 : 1.0;
+    // Value-only: <= -1.0 disables the 12-1 momentum floor (pure value).
+    const valueParams = isValue
+      ? { min_momentum_12_1: momentumFloorOn ? VALUE_MOMENTUM_FLOOR : -1.0 }
+      : {};
     return {
       parameters: isSaudi
-        ? { market: 'SA', sector_strength_top_fraction: sectorFraction }
+        ? { market: 'SA', sector_strength_top_fraction: sectorFraction, ...valueParams }
         : {
             liquidity_min_avg_dollar_volume_20d: settings.liquidity_min_avg_dollar_volume_20d,
             liquidity_min_price: settings.liquidity_min_price,
             sector_strength_top_fraction: sectorFraction,
+            ...valueParams,
           },
       filters: {
         // Saudi compliance data is test-only, so don't apply the Shariah gate there.
@@ -224,22 +239,43 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
         />
       </section>
 
-      <section className="panel flex flex-col gap-1 p-4 text-sm text-slate-700">
-        <label className="inline-flex items-center gap-2">
-          <input
-            checked={sectorGateOn}
-            className="h-4 w-4"
-            onChange={(event) => setSectorGateOn(event.target.checked)}
-            type="checkbox"
-          />
-          <span className="font-medium text-slate-900">Sector-strength gate (industry momentum)</span>
-        </label>
-        <p className="text-xs text-slate-500 sm:pl-6">
-          {sectorGateOn
-            ? 'On: keep only names in the top half of sectors by breadth (lower drawdown, fewer candidates).'
-            : 'Off (default): the gate lost the A/B on returns, so it is disabled. Turn on to filter to leading sectors.'}
-        </p>
-      </section>
+      {isMomentum ? (
+        <section className="panel flex flex-col gap-1 p-4 text-sm text-slate-700">
+          <label className="inline-flex items-center gap-2">
+            <input
+              checked={sectorGateOn}
+              className="h-4 w-4"
+              onChange={(event) => setSectorGateOn(event.target.checked)}
+              type="checkbox"
+            />
+            <span className="font-medium text-slate-900">Sector-strength gate (industry momentum)</span>
+          </label>
+          <p className="text-xs text-slate-500 sm:pl-6">
+            {sectorGateOn
+              ? 'On: keep only names in the top half of sectors by breadth (lower drawdown, fewer candidates).'
+              : 'Off (default): the gate lost the A/B on returns, so it is disabled. Turn on to filter to leading sectors.'}
+          </p>
+        </section>
+      ) : null}
+
+      {isValue ? (
+        <section className="panel flex flex-col gap-1 p-4 text-sm text-slate-700">
+          <label className="inline-flex items-center gap-2">
+            <input
+              checked={momentumFloorOn}
+              className="h-4 w-4"
+              onChange={(event) => setMomentumFloorOn(event.target.checked)}
+              type="checkbox"
+            />
+            <span className="font-medium text-slate-900">Falling-knife guard (12-1 momentum floor)</span>
+          </label>
+          <p className="text-xs text-slate-500 sm:pl-6">
+            {momentumFloorOn
+              ? `On: exclude names whose 12-1 month momentum is below ${Math.round(VALUE_MOMENTUM_FLOOR * 100)}% — drops cheapness that is cheap because it is collapsing. Names with unknown momentum pass through.`
+              : 'Off (default): pure value. The Piotroski gate screens financial health, not price trend, so deep decliners can pass. Turn on to also require the price not be in a steep downtrend.'}
+          </p>
+        </section>
+      ) : null}
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
         <StrategyGatesPanel strategy={strategy} />
@@ -275,7 +311,7 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
             </div>
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
               <AsOfBadge date={screenResult.data_as_of} />
-              {strategySlug === 'midterm_52w_high_momentum' && screenResult.candidates.length > 0 ? (
+              {supportsAdvisorPrompt(strategySlug) && screenResult.candidates.length > 0 ? (
                 <CopyScreenAdvisorPrompt slug={strategySlug} getRequestBody={buildRequestBody} disabled={loading} />
               ) : null}
             </div>
