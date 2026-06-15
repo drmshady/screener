@@ -467,3 +467,204 @@ def build_screen_advisor_prompt(
         _batch_honesty_block(screen, survivorship, directive),
     ]
     return "\n\n".join(sections) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Four-variant matrix prompt (feature 006) — one shared header + regime, four
+# delimited variant sections, one combined honesty footer. Reuses the per-screen
+# section builders so it inherits their determinism and directive gating.
+# ---------------------------------------------------------------------------
+
+
+def _matrix_task_instruction(directive: bool) -> str:
+    if directive:
+        return (
+            "TASK (personal-use, single-user — directive guidance permitted): You are an "
+            "expert advisor. Below are FOUR variants of two mid-term strategies, each toggling "
+            "ONE gate on/off over the SAME universe snapshot. For each variant, walk its gates "
+            "and give a concise directive call (take / pass / size) with your confidence; then "
+            "compare the variants and say which configuration you would act on and why. Use only "
+            "the numbers provided here — do not compute or invent figures. End with the honesty "
+            "caveats. This guidance is for the single owner of this tool only and must not be "
+            "redistributed."
+        )
+    return (
+        "TASK: You are an expert analyst. Below are FOUR variants of two mid-term strategies, "
+        "each toggling ONE gate on/off over the SAME universe snapshot. For each variant, explain "
+        "neutrally how its candidates score against that strategy's rules, then compare the "
+        "variants as screen configurations (screen matches / candidates for further research, not "
+        "recommendations). Use only the numbers provided here — do not compute or invent figures. "
+        "End with the honesty caveats."
+    )
+
+
+def _matrix_regime_block(regime: str | None) -> str:
+    head = (
+        f"- Current regime: {regime}"
+        if regime
+        else "- Current regime: unavailable for this snapshot (treat regime-dependent "
+        "favorability as unknown)"
+    )
+    return (
+        "## Market regime\n"
+        f"{head}\n"
+        "- (favorability is noted per-strategy inside each variant section)"
+    )
+
+
+def _variant_run_config(variant) -> str:
+    """Run-configuration block for one variant, stating the toggled parameter's
+    value explicitly (FR-012 item 2) and whether the gate is intentionally
+    ON/OFF (FR-006). Momentum reuses the per-screen sector-gate block; value gets
+    a momentum-floor description."""
+    toggle_line = (
+        f"- Toggle: {variant.toggle_param} = {variant.toggle_value} "
+        f"({'ON' if variant.toggle_on else 'OFF'})"
+    )
+    if variant.toggle_param == "sector_strength_top_fraction":
+        base = _run_config_block(variant.screen)
+        head, _, rest = base.partition("\n")
+        return f"{head}\n{toggle_line}\n{rest}"
+    # Value momentum-floor toggle.
+    lines = ["## Run configuration", toggle_line]
+    if variant.toggle_on:
+        pct = int(round(abs(variant.toggle_value) * 100))
+        lines.append(
+            f"- Momentum floor: ON — names whose 12-1 month price momentum is below -{pct}% are "
+            "dropped (falling-knife guard); names with unknown momentum pass through. The "
+            "Piotroski gate screens financial health, not price trend, so this adds a trend "
+            "requirement on top of pure value."
+        )
+    else:
+        lines.append(
+            "- Momentum floor: OFF (pure value, default) — price trend is NOT filtering this run; "
+            "the Piotroski F-Score screens financial health only, so deep decliners can pass. Any "
+            "momentum-floor skip below is by configuration, not missing data; do not treat it as a "
+            "quality gap."
+        )
+    return "\n".join(lines)
+
+
+def _matrix_candidates_block(variant) -> str:
+    candidates = list(variant.screen.candidates)
+    sector_gate_on = (
+        variant.toggle_param == "sector_strength_top_fraction" and variant.toggle_on
+    )
+    body = (
+        "\n\n".join(
+            _candidate_summary_block(c, sector_gate_on=sector_gate_on)
+            for c in candidates
+        )
+        if candidates
+        else "_No candidates matched this variant._"
+    )
+    return f"### Candidates ({len(candidates)})\n{body}"
+
+
+def _matrix_strategy_kind(slug: str) -> str:
+    return "value" if slug == "midterm_value_composite" else "momentum"
+
+
+def _matrix_bias_line(variant) -> str:
+    kind = _matrix_strategy_kind(variant.strategy.slug)
+    b = variant.bias_check or {}
+    if not b.get("confirmed"):
+        verdict = (
+            "UNCONFIRMED — backtest artifact unavailable; do not assume it is clean"
+        )
+    elif b.get("passed") is False:
+        note = b.get("note") or ""
+        verdict = (
+            "FAILS its survivorship check — historical performance is OPTIMISTIC "
+            "(delisted/failed names absent)" + (f". {note}" if note else "")
+        )
+    else:
+        verdict = "passes its survivorship check on this snapshot"
+    return f"- Backtest bias-check ({kind}): {verdict}"
+
+
+def _matrix_honesty_block(variants, directive: bool) -> str:
+    screen0 = variants[0].screen
+    lines = ["## Honesty & limitations (read before any performance judgment)"]
+    # Per-strategy survivorship caveat, deduped, stated as applying to BOTH of a
+    # strategy's variants (Decision 6). Insertion order is the fixed variant order
+    # (momentum then value), so the footer is deterministic.
+    seen: dict[str, tuple[str, dict]] = {}
+    for v in variants:
+        seen.setdefault(v.strategy.slug, (v.strategy.name, v.bias_check or {}))
+    for _slug, (name, b) in seen.items():
+        if not b.get("confirmed"):
+            lines.append(
+                f"- {name}: survivorship UNCONFIRMED (backtest artifact unavailable) — applies "
+                "to BOTH of its variants above."
+            )
+        elif b.get("passed") is False:
+            note = b.get("note") or ""
+            lines.append(
+                f"- {name}: backtest FAILS survivorship, so historical performance is OPTIMISTIC "
+                "for BOTH of its variants above — a screen-time toggle does not re-run the "
+                "backtest." + (f" Detail: {note}" if note else "")
+            )
+        else:
+            lines.append(
+                f"- {name}: backtest passes survivorship on this snapshot (applies to both of its "
+                "variants)."
+            )
+    lines.append(
+        "- Per-candidate data gaps (gates skipped on missing data) are flagged inline above and "
+        "are NOT genuine passes."
+    )
+    notes: list[str] = []
+    for v in variants:
+        for n in v.screen.data_notes or []:
+            if n not in notes:
+                notes.append(n)
+    if notes:
+        lines.append("- Data notes: " + " ".join(notes))
+    lines.append(f"- Data freshness: end-of-day, as of {screen0.as_of_date}.")
+    lines.append(f"- {screen0.disclaimer}")
+    if directive:
+        lines.append(
+            "- Scope: directive guidance here is for the single owner of this personal-use tool "
+            "only; it is not advice for anyone else and must not be redistributed."
+        )
+    return "\n".join(lines)
+
+
+def build_midterm_matrix_advisor_prompt(
+    variants,
+    *,
+    regime: str | None = None,
+    directive: bool = False,
+) -> str:
+    """Assemble ONE advisor prompt covering all four mid-term variants.
+
+    `variants` is a list of `VariantResult`. One shared task header + market
+    regime, then four delimited variant sections (declaration + run-config +
+    candidates + that strategy's bias-check), then one combined honesty footer.
+    Pure function of its inputs (no wall-clock) → byte-identical re-export for a
+    fixed snapshot (FR-013). Sections follow contracts/advisor-prompt.schema.md.
+    """
+    sections = [
+        _matrix_task_instruction(directive),
+        _matrix_regime_block(regime),
+    ]
+    for i, variant in enumerate(variants, start=1):
+        gate_names = (
+            [g.gate for g in variant.screen.candidates[0].gate_results]
+            if variant.screen.candidates
+            else []
+        )
+        sections.append(
+            "\n\n".join(
+                [
+                    f"## Variant {i} — {variant.label}",
+                    _strategy_context(variant.strategy, gate_names),
+                    _variant_run_config(variant),
+                    _matrix_candidates_block(variant),
+                    _matrix_bias_line(variant),
+                ]
+            )
+        )
+    sections.append(_matrix_honesty_block(variants, directive))
+    return "\n\n".join(sections) + "\n"

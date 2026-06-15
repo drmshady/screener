@@ -184,3 +184,42 @@ class ScreenAdvisorPromptResponse(BaseModel):
     prompt: str
     data_as_of: str
     disclaimer: str
+
+
+# Feature 006 — mid-term side-by-side variant comparison wire models. All
+# additive: each variant reuses the existing ScreenResult, so no change to
+# Candidate / ScreenResult / Strategy themselves (data-model.md).
+
+
+class VariantResult(BaseModel):
+    """One of the four fixed mid-term variants in a side-by-side comparison.
+
+    `bias_check` is the strategy's survivorship verdict from
+    `load_survivorship_status(slug)`; it is identical for both variants of a
+    strategy because a screen-time toggle does not re-run the backtest
+    (Decision 6).
+    """
+
+    key: str
+    label: str
+    strategy: Strategy
+    toggle_param: str
+    toggle_value: float
+    toggle_on: bool
+    screen: ScreenResult
+    bias_check: Dict[str, Any]
+
+
+class MidtermComparisonResponse(BaseModel):
+    variants: List[VariantResult]
+    regime: Optional[str] = None
+    data_as_of: str
+    disclaimer: str
+
+
+class MidtermComparePromptResponse(BaseModel):
+    prompt: str
+    variant_count: int
+    personal_use_directive: bool
+    data_as_of: str
+    disclaimer: str

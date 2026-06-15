@@ -929,21 +929,16 @@ def _opt_float(value: Any) -> float | None:
         return None
 
 
-def run_strategy(
-    strategy_slug: str,
-    parameters: dict[str, Any] | None = None,
-    filters: dict[str, Any] | None = None,
-    shariah_overrides: dict[str, Any] | None = None,
-    as_of_date: str | None = None,
-) -> ScreenResult:
-    strategy = registry.get(strategy_slug)
-    if strategy is None:
-        from .. import strategies as _strategies
-
-        strategy = registry.get(strategy_slug)
-    if strategy is None:
-        raise KeyError(strategy_slug)
-
+def _resolve_screen_inputs(
+    strategy,
+    parameters: dict[str, Any] | None,
+    filters: dict[str, Any] | None,
+    shariah_overrides: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], bool]:
+    """Normalize a screen request into the shared
+    ``(parameters_snapshot, filters_snapshot, normalized_shariah_overrides,
+    shariah_only)`` tuple used by both the single-strategy path and the
+    side-by-side matrix runner. No price I/O (T003 seam)."""
     parameters_snapshot = dict(parameters or {})
     # Market selector (centralized so every caller — screen, candidate detail,
     # analyze — behaves the same). Saudi (Tadawul) → screen the `.SR` universe with
@@ -974,7 +969,23 @@ def run_strategy(
                 "shariah_user_exclusion": normalized_shariah_overrides["exclusion"],
             }
         )
+    return (
+        parameters_snapshot,
+        filters_snapshot,
+        normalized_shariah_overrides,
+        shariah_only,
+    )
 
+
+def _build_screen_universe(
+    parameters_snapshot: dict[str, Any],
+    normalized_shariah_overrides: dict[str, Any],
+    shariah_only: bool,
+    as_of_date: str | None,
+) -> tuple[pd.DataFrame, str]:
+    """Assemble the liquid-universe snapshot for a screen request. This is the
+    expensive (price-I/O) step; the matrix runner calls it ONCE and fans the
+    shared snapshot out across the four variants (research Decision 2)."""
     min_adv_20d = float(
         parameters_snapshot.get("liquidity_min_avg_dollar_volume_20d", 1_000_000)
     )
@@ -983,30 +994,81 @@ def run_strategy(
         # Screen the actual compliant universe (hundreds of names) sourced from the
         # local Stooq archive + EDGAR-cache fundamentals, instead of post-filtering
         # the 20-name default set.
-        universe, data_as_of = build_universe_snapshot_stooq(
+        return build_universe_snapshot_stooq(
             _compliant_universe(normalized_shariah_overrides),
             as_of_date=as_of_date,
             min_adv_20d=min_adv_20d,
             min_price=min_price,
         )
-    else:
-        explicit_tickers = _has_explicit_tickers(parameters_snapshot)
-        stooq_tickers = [] if explicit_tickers else _all_stooq_tickers()
-        if stooq_tickers:
-            universe, data_as_of = build_universe_snapshot_stooq(
-                stooq_tickers,
-                as_of_date=as_of_date,
-                min_adv_20d=min_adv_20d,
-                min_price=min_price,
-            )
-        else:
-            universe, data_as_of = build_universe_snapshot(
-                _parse_tickers(parameters_snapshot),
-                as_of_date=as_of_date,
-                min_adv_20d=min_adv_20d,
-                min_price=min_price,
-            )
+    explicit_tickers = _has_explicit_tickers(parameters_snapshot)
+    stooq_tickers = [] if explicit_tickers else _all_stooq_tickers()
+    if stooq_tickers:
+        return build_universe_snapshot_stooq(
+            stooq_tickers,
+            as_of_date=as_of_date,
+            min_adv_20d=min_adv_20d,
+            min_price=min_price,
+        )
+    return build_universe_snapshot(
+        _parse_tickers(parameters_snapshot),
+        as_of_date=as_of_date,
+        min_adv_20d=min_adv_20d,
+        min_price=min_price,
+    )
 
+
+def run_strategy(
+    strategy_slug: str,
+    parameters: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
+    shariah_overrides: dict[str, Any] | None = None,
+    as_of_date: str | None = None,
+) -> ScreenResult:
+    strategy = registry.get(strategy_slug)
+    if strategy is None:
+        from .. import strategies as _strategies
+
+        strategy = registry.get(strategy_slug)
+    if strategy is None:
+        raise KeyError(strategy_slug)
+
+    (
+        parameters_snapshot,
+        filters_snapshot,
+        normalized_shariah_overrides,
+        shariah_only,
+    ) = _resolve_screen_inputs(strategy, parameters, filters, shariah_overrides)
+    universe, data_as_of = _build_screen_universe(
+        parameters_snapshot, normalized_shariah_overrides, shariah_only, as_of_date
+    )
+    return _screen_from_universe(
+        strategy,
+        strategy_slug,
+        universe,
+        data_as_of,
+        parameters_snapshot,
+        filters_snapshot,
+        normalized_shariah_overrides,
+        shariah_only,
+        as_of_date,
+    )
+
+
+def _screen_from_universe(
+    strategy,
+    strategy_slug: str,
+    universe: pd.DataFrame,
+    data_as_of: str,
+    parameters_snapshot: dict[str, Any],
+    filters_snapshot: dict[str, Any],
+    normalized_shariah_overrides: dict[str, Any],
+    shariah_only: bool,
+    as_of_date: str | None,
+) -> ScreenResult:
+    """Apply a strategy's ``rules()`` to a (possibly shared) universe snapshot and
+    assemble the ScreenResult: regime gate, per-run toggles, events/earnings,
+    Shariah filtering, candidate rows. Split out of run_strategy so the matrix
+    runner can reuse one snapshot across four variants (T003)."""
     # Regime master switch (Faber 2007 / T108a): for strategies that mark
     # downtrends Unfavorable, take no NEW entries while SPY is below its 200-day
     # SMA. Enabled by default; pass parameters.regime_gate=false to disable.

@@ -1,16 +1,23 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..agent.advisor_prompt import build_screen_advisor_prompt, load_survivorship_status
+from ..agent.advisor_prompt import (
+    build_midterm_matrix_advisor_prompt,
+    build_screen_advisor_prompt,
+    load_survivorship_status,
+)
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..lib.flags import personal_use_directive
 from ..models.strategy import (
+    MidtermComparePromptResponse,
+    MidtermComparisonResponse,
     ScreenAdvisorPromptResponse,
     ScreenResult,
     ScreenRunRequest,
     Strategy,
 )
 from ..screening.engine import run_strategy
+from ..screening.midterm_matrix import run_midterm_matrix
 from ..strategies._registry import registry
 from .. import (
     strategies as _strategies,
@@ -39,6 +46,57 @@ def list_strategies(timeframe: str | None = None, enabled_only: bool = False):
     return StrategiesResponse(
         strategies=strategies,
         data_as_of=utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+# NOTE: the mid-term compare routes are declared BEFORE the dynamic `/{slug}`
+# routes so `/strategies/midterm-compare/...` is not captured as `slug="midterm-
+# compare"` by `/{slug}/advisor-prompt`.
+
+
+@router.post("/midterm-compare", response_model=MidtermComparisonResponse)
+def midterm_compare(request: ScreenRunRequest):
+    """Run the fixed four-variant mid-term matrix over ONE shared snapshot and
+    return all four variant screens + the shared regime/data_as_of (feature 006).
+    The two A/B params are owned by the matrix; caller values for them are
+    ignored (contracts/compare-api.md)."""
+    run = run_midterm_matrix(
+        as_of_date=request.as_of_date,
+        filters=request.filters,
+        shariah_overrides=request.shariah_overrides,
+        parameters=request.parameters,
+    )
+    return MidtermComparisonResponse(
+        variants=run.variants,
+        regime=run.regime,
+        data_as_of=run.data_as_of,
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.post(
+    "/midterm-compare/advisor-prompt", response_model=MidtermComparePromptResponse
+)
+def midterm_compare_advisor_prompt(request: ScreenRunRequest):
+    """Run the matrix and return ONE combined four-variant advisor prompt
+    (declaration + gates + levels + shared regime + per-strategy bias-check).
+    Directive framing is gated on the personal-use flag (FR-014)."""
+    run = run_midterm_matrix(
+        as_of_date=request.as_of_date,
+        filters=request.filters,
+        shariah_overrides=request.shariah_overrides,
+        parameters=request.parameters,
+    )
+    directive = personal_use_directive()
+    prompt = build_midterm_matrix_advisor_prompt(
+        run.variants, regime=run.regime, directive=directive
+    )
+    return MidtermComparePromptResponse(
+        prompt=prompt,
+        variant_count=len(run.variants),
+        personal_use_directive=directive,
+        data_as_of=run.data_as_of,
         disclaimer=DISCLAIMER_TEXT,
     )
 
