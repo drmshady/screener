@@ -11,6 +11,8 @@ This feature is a **stabilization and release-readiness pass** over the existing
 
 Scope is **verification, hardening, freshness, and packaging** — no strategy rule, default, citation, or backtest baseline changes (consistent with the constitution's data-integrity and transparency principles).
 
+**Primary strategy for this release**: `midterm_52w_high_momentum` (momentum) is the headline strategy that must be fully correct, robust, and deployment-ready. The value strategy (`midterm_value_composite`) is **postponed** — it remains present and disabled/secondary, receives no further investment in this release, and the value-coverage hardening branch (feature 007) is intentionally **not** integrated. Release verification therefore prioritizes momentum's screen, candidate detail, integrity detection, and advisor prompt.
+
 ## Clarifications
 
 ### Session 2026-06-16
@@ -181,6 +183,7 @@ As the operator doing the final deployment on my own machine, I want a documente
 
 ## Assumptions
 
+- **Momentum-primary, value postponed**: The momentum strategy is the release focus and must be fully verified. The value strategy stays as-is (no further work, feature 007 not merged); its existing tests must still pass but it is not gated on new hardening here.
 - **Personal-use single-machine deployment**: "Final deployment" means the constitution's v1 scope — one operator, one machine, no redistribution, free-tier data sources by default. Hosted/multi-user deployment is explicitly out of scope.
 - **No strategy or baseline changes**: This pass changes only verification, freshness, presentation, robustness, and packaging. Strategy rules, defaults, citations, and backtest baselines are frozen.
 - **Existing data sources reused**: Refresh-on-start uses the already-integrated free providers (EDGAR, yfinance/Stooq, SPUS, calendars); no new paid provider is required, though the optional paid upgrade path remains available per-strategy.
