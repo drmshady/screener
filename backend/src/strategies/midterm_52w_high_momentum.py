@@ -5,6 +5,21 @@ from pathlib import Path
 import pandas as pd
 
 from ..models.strategy import BacktestSummary, Modification, Strategy, StrategyParameter
+from ..screening.integrity.contract import OutputContract
+from ..screening.integrity.invariants import (
+    aggregate_flag_count,
+    coherence_dist_to_high,
+    coherence_entry_eq_close,
+    gate_satisfied,
+    identity_single_share_class,
+    level_sanity,
+    score_reproduces,
+    series_integrity,
+    value_domain_finite,
+    value_domain_high_plausible,
+    value_domain_positive,
+    value_domain_return_plausible,
+)
 from ._helpers.quality import gross_profitability_mask, passes_quality_screen
 from ._helpers.reference_thresholds import load_reference_thresholds
 from ._helpers.sector_rank import rank_within_sector
@@ -887,6 +902,81 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
     return _with_notes(matched.drop(columns=["_gp_pass", "_ag_pass"], errors="ignore"))
 
 
+# Output-integrity contract (feature 008, T012; contracts/momentum-contract.md).
+# The machine-checkable properties every returned candidate row must satisfy. The
+# strategy-agnostic engine (screening/integrity/engine.py) validates each candidate
+# against this on every live screen and in the offline harness — one definition,
+# two enforcement points. This changes NOTHING about rules(), defaults, the
+# citation, or REGIME_FAVORABILITY (FR-023); it only DECLARES what correct output
+# looks like. Plausibility bounds marked [A/B] are initial defaults to calibrate on
+# the 2026-06-12 snapshot (research Decision 9); the 10% divergence flag is fixed by
+# the spec and lives in the harness cross-check, not here.
+_RETURN_MIN = -0.95
+_RETURN_MAX = 9.0  # [A/B] +900%
+_HIGH_MAX_MULT = 12.0  # [A/B] 52w high at most 12x the close
+_JUMP_MAX = 0.40  # [A/B] largest plausible single-session move absent a known action
+_FINITE_FIGURES = (
+    "close",
+    "52w_high",
+    "return_12_1",
+    "atr",
+    "score",
+    "stop_loss",
+    "take_profit",
+)
+
+
+def _momentum_score(row, signals):
+    """Reproduce the rules() score: return_12_1 · vol_scalar / (1 + dist_to_high),
+    with the no-momentum fallback rules() uses when return_12_1 is unavailable."""
+    dist = row.get("dist_to_high")
+    if dist is None or pd.isna(dist):
+        return None
+    ret = row.get("return_12_1")
+    vol = row.get("vol_scalar")
+    if ret is not None and not pd.isna(ret) and vol is not None and not pd.isna(vol):
+        return float(ret) * float(vol) / (1.0 + float(dist))
+    return 1.0 / (1.0 + float(dist))
+
+
+OUTPUT_CONTRACT = OutputContract(
+    strategy_slug="midterm_52w_high_momentum",
+    invariants=[
+        # coherence — surfaced figures agree with each other
+        coherence_dist_to_high(),
+        coherence_entry_eq_close(),
+        # gate — a listed name actually clears the hard proximity gate
+        gate_satisfied(
+            name="gate.proximity",
+            figure="dist_to_high",
+            column="dist_to_high",
+            threshold=float(PARAMETERS["proximity_pct"].default),
+            message=(
+                "candidate is listed but does not actually satisfy the "
+                f"{PARAMETERS['proximity_pct'].default:.0%} proximity-to-high gate; "
+                "verify before acting"
+            ),
+        ),
+        # score — the ranking figure reproduces its declared formula
+        score_reproduces(compute=_momentum_score, rel_tol=1e-3),
+        # level — risk geometry is sane and matches the declared R-multiple
+        *level_sanity(r_multiple=float(PARAMETERS["take_profit_r_multiple"].default)),
+        # value_domain — figures finite, positive, and within plausible bounds
+        value_domain_finite(_FINITE_FIGURES),
+        value_domain_positive(["close", "atr"]),
+        value_domain_return_plausible(lower=_RETURN_MIN, upper=_RETURN_MAX),
+        value_domain_high_plausible(h_max=_HIGH_MAX_MULT),
+        # series — the backing history is well-formed and adjustment-consistent
+        # (reads the §8 signals computed in US3; defaults safe until then)
+        *series_integrity(jump_max=_JUMP_MAX),
+        # identity — price and fundamentals are one share class (FR-014)
+        identity_single_share_class(),
+        # aggregate — informational flagged-count note
+        aggregate_flag_count(),
+    ],
+)
+
+
 strategy = Strategy(
     slug="midterm_52w_high_momentum",
     name=NAME,
@@ -901,6 +991,7 @@ strategy = Strategy(
     modifications=MODIFICATIONS,
     rules=rules,
     backtest_summary=_load_backtest_summary(),
+    output_contract=OUTPUT_CONTRACT,
 )
 
 registry.register(strategy)

@@ -113,3 +113,17 @@ constitution's non-negotiable no-advice boundary applies again: revert to
 neutral framing ("screen match," "candidate for further research"), drop
 buy/sell language, and keep the disclaimer + citation + as-of date on
 everything.
+
+## 9. Data Integrity & Suspect Signals (Feature 008)
+
+- **The screener self-checks its output:** Every candidate is validated against
+  an `OutputContract` (coherence, gate satisfaction, score reproduction, level
+  sanity, value-domain, and series integrity).
+- **Loud flagging:** Any name that violates a check carries a `DATA INTEGRITY
+  WARNING` badge and is **demoted** to the bottom of the list.
+- **Verification required:** If a name is flagged, **verify its figures manually**
+  before acting. The "DATA INTEGRITY WARNING" in the advisor prompt names the
+  specific suspect figure (e.g., "unexplained single-session jump").
+- **Seam adjustment:** For US momentum, history is stitched from Stooq and
+  yfinance; a back-adjustment factor is used to align them. If the seam is
+  unstable, it is flagged.

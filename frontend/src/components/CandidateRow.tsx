@@ -88,7 +88,25 @@ export function CandidateRow({
           {candidate.ticker}
         </Link>
         <div className="text-xs text-slate-500">{candidate.name}</div>
+        {candidate.return_12_1 !== undefined && candidate.return_12_1 !== null ? (
+          <div
+            className={`mt-1 text-xs font-bold ${
+              candidate.return_12_1 >= 0 ? 'text-emerald-700' : 'text-red-700'
+            }`}
+          >
+            12-1 Mom: {candidate.return_12_1 >= 0 ? '+' : ''}
+            {(candidate.return_12_1 * 100).toFixed(1)}%
+          </div>
+        ) : null}
         {rowTimeframe ? <div className="mt-1 text-xs font-medium text-slate-700">{rowTimeframe}</div> : null}
+        {candidate.data_suspect ? (
+          <div
+            className="mt-1 inline-flex items-center gap-1 bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-800"
+            title={candidate.data_integrity_warnings.map((w) => w.reason).join('\n')}
+          >
+            🛑 DATA INTEGRITY
+          </div>
+        ) : null}
         {candidate.warnings && candidate.warnings.length > 0 ? (
           <div
             className="mt-1 inline-flex items-center gap-1 bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"

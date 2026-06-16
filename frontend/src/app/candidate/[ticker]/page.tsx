@@ -5,6 +5,7 @@ import { Abbr } from '@/components/Abbr';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidatePriceChart } from '@/components/ChartPanels';
 import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
+import { IndependentVerify } from '@/components/IndependentVerify';
 import { ShariahBadge } from '@/components/ShariahBadge';
 import { supportsAdvisorPrompt } from '@/lib/advisorPrompt';
 import { eventTerm } from '@/lib/events';
@@ -193,6 +194,8 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
         }
       />
 
+      <IndependentVerify ticker={detail.ticker} />
+
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-slate-950">Strategy matches</h2>
         <div className="grid gap-3">
@@ -210,7 +213,26 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                 <div>
                   <div className="text-sm font-semibold text-slate-950">{match.strategy_name ?? 'Strategy match'}</div>
                   {match.timeframe ? <div className="text-xs font-medium text-slate-600">{match.timeframe}</div> : null}
-                  <p className="text-sm text-slate-600">{match.reason}</p>
+                  {match.return_12_1 !== undefined && match.return_12_1 !== null ? (
+                    <div
+                      className={`text-sm font-bold ${
+                        match.return_12_1 >= 0 ? 'text-emerald-700' : 'text-red-700'
+                      }`}
+                    >
+                      12-1 Momentum: {match.return_12_1 >= 0 ? '+' : ''}
+                      {(match.return_12_1 * 100).toFixed(1)}%
+                    </div>
+                  ) : null}
+                  {match.data_suspect && match.data_integrity_warnings.length > 0 ? (
+                    <div className="mt-2 space-y-1">
+                      {match.data_integrity_warnings.map((w, i) => (
+                        <div key={i} className="bg-red-100 px-3 py-2 text-sm font-bold text-red-800">
+                          🛑 {w.reason}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-1 text-sm text-slate-600">{match.reason}</p>
                 </div>
                 <div className="text-sm text-slate-600">Rank #{match.rank}</div>
               </div>

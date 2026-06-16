@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 from ..data.prices import YFinancePriceProvider, fetch_incremental_ohlcv
 from ..data.prices_store import load_prices, save_prices
@@ -17,6 +18,7 @@ from ..data.profiles import load_or_fetch_profiles
 from ..data.universe import UniverseLoader
 from ..data.market_calendar import drop_market_weekends, market_of, trading_days_between
 from ..events.service import EventsService, TickerEventsSnapshot
+from ..indicators.seam_adjust import apply_seam_adjustment, calculate_seam_factor
 from ..indicators.momentum import calculate_12_1_return
 from ..indicators.moving_averages import calculate_sma
 from ..indicators.piotroski import f_score_from_mapping
@@ -29,7 +31,8 @@ from ..indicators.valuation import (
 )
 from ..indicators.volatility import calculate_adr_ratio, calculate_atr
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
-from ..models.strategy import Candidate, ScreenResult
+from ..models.strategy import Candidate, DataIntegrityWarning, ScreenResult
+from .integrity.engine import evaluate_contract
 from .regime import market_regime, strategy_is_regime_sensitive
 from ..shariah.lookup import ShariahLookup, normalize_shariah_overrides
 from ..strategies._registry import registry
@@ -63,7 +66,11 @@ _SNAPSHOT_CACHE_TTL_SECONDS = 60
 _MAX_BAR_STALENESS_BDAYS = 5
 _DISK_SNAPSHOT_CACHE_TTL_SECONDS = 24 * 60 * 60
 _STOOQ_SNAPSHOT_CACHE_VERSION = (
-    "v4"  # v2: fresh overlay; v3: warm-profile overlay; v4: per-ticker staleness gate
+    # v2: fresh overlay; v3: warm-profile overlay; v4: per-ticker staleness gate;
+    # v5: feature 008 integrity signals (series_max_move_explained,
+    # seam_overlap_found) added to the snapshot schema — bump invalidates older
+    # cached snapshots that lack them (else stale rows default-pass the contract).
+    "v5"
 )
 _SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[datetime, pd.DataFrame, str]] = {}
 _STOOQ_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[datetime, pd.DataFrame, str]] = {}
@@ -411,14 +418,75 @@ def _compute_snapshot_rows(
             stale_excluded.append(str(ticker))
             if exclude_stale:
                 continue
+
+        # T132a (Phase 5): Series-integrity signals (§8)
+        # 1. Dates monotonic + unique
+        dates = history["as_of_date"]
+        dates_ok = bool(dates.is_monotonic_increasing and dates.is_unique)
+
+        # 2. Max session move (on adjusted basis). Some price sources (the Stooq
+        # deep archive, single-ticker fallback, tests) carry no native adj_close —
+        # default it to the raw close so the row computes instead of crashing.
+        if "adj_close" in history.columns:
+            adj_close = history["adj_close"].astype(float)
+            adj_close = adj_close.where(adj_close.notna(), history["close"].astype(float))
+        else:
+            adj_close = history["close"].astype(float)
+        session_returns = adj_close.pct_change().dropna()
+        max_move = float(session_returns.abs().max()) if not session_returns.empty else 0.0
+
+        # 3. Seam flags (from overlay)
+        seam_consistent = bool(history.get("seam_consistent", pd.Series([True] * len(history))).iloc[-1])
+        seam_factor = float(history.get("seam_factor", pd.Series([1.0] * len(history))).iloc[-1])
+        seam_overlap_found = bool(history.get("seam_overlap_found", pd.Series([True] * len(history))).iloc[-1])
+
+        # 4. Corporate action in window (lookback 252d)
+        # A change in adj_close/close ratio indicates a split or dividend.
+        ratio = adj_close / history["close"].astype(float)
+        # Fill zero closes to avoid Inf
+        ratio = ratio.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+        ratio_step = (ratio / ratio.shift(1) - 1.0).abs()
+        action_in_window = bool((ratio_step > 0.001).any())
+
+        # 4b. LOCALIZED explanation of the single largest session move. A
+        # window-wide "some action happened this year" must NOT excuse an
+        # unrelated bad-bar spike (that masked genuine defects, feature 008 fix):
+        # the jump invariant reads THIS signal, which is True only when the
+        # session achieving the max move coincides (±1 session) with a real
+        # adj_close/close ratio change. A properly-adjusted action leaves no jump
+        # on the adjusted series, so an adjusted-series jump that lines up with no
+        # ratio change is a true data defect.
+        adj_arr = adj_close.to_numpy(dtype=float)
+        ratio_arr = ratio.to_numpy(dtype=float)
+        max_move_explained = False
+        if adj_arr.size >= 2:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                sess_ret = np.abs(np.diff(adj_arr) / adj_arr[:-1])
+                ratio_chg = np.abs(np.diff(ratio_arr) / ratio_arr[:-1])
+            sess_ret = np.nan_to_num(sess_ret, nan=0.0, posinf=0.0, neginf=0.0)
+            ratio_chg = np.nan_to_num(ratio_chg, nan=0.0, posinf=0.0, neginf=0.0)
+            if sess_ret.size and sess_ret.max() > 0:
+                j = int(np.argmax(sess_ret))
+                lo, hi = max(0, j - 1), min(ratio_chg.size - 1, j + 1)
+                max_move_explained = bool((ratio_chg[lo : hi + 1] > 0.001).any())
+
+        # 5. Share class consistent (FR-014)
+        profile = profiles.get(str(ticker), {})
+        p_ticker = profile.get("ticker")
+        share_class_consistent = True
+        if p_ticker and str(p_ticker).upper() != str(ticker).upper():
+            # If the profile's ticker differs from the price ticker, it's a cross-class join.
+            share_class_consistent = False
+
         close = history["close"].astype(float)
         high = history["high"].astype(float)
         low = history["low"].astype(float)
         volume = history["volume"].astype(float)
         atr = _last_wilder_atr(high, low, close, length=14)
+        # T132a (Phase 5): momentum computed on adjusted series
         ret_12_1 = (
-            float(close.iloc[-22] / close.iloc[-253] - 1.0)
-            if len(close) > 252 and close.iloc[-253] != 0
+            float(adj_close.iloc[-22] / adj_close.iloc[-253] - 1.0)
+            if len(adj_close) > 252 and adj_close.iloc[-253] != 0
             else None
         )
         sma_50 = close.tail(50).mean() if len(close) >= 50 else None
@@ -476,8 +544,8 @@ def _compute_snapshot_rows(
                 "high": float(high.iloc[-1]),
                 "low": float(low.iloc[-1]),
                 "volume": int(volume.iloc[-1]),
-                # George-Hwang PTH uses the peak daily *closing* price (T149).
-                "52w_high": float(close.tail(252).max()),
+                # T132a (Phase 5): 52w high on adjusted series (peak daily closing)
+                "52w_high": float(adj_close.tail(252).max()),
                 "return_12_1": float(ret_12_1),
                 "sma_50": float(sma_50) if pd.notna(sma_50) else None,
                 "sma_150": float(sma_150) if pd.notna(sma_150) else None,
@@ -517,6 +585,16 @@ def _compute_snapshot_rows(
                 "volume_ratio_recent": volume_ratio_recent,
                 "chandelier_exit": chandelier_exit,
                 "daily_returns": close.pct_change().dropna().tail(126),
+                # §8 Signals
+                "series_dates_ok": dates_ok,
+                "series_max_session_move": max_move,
+                "seam_consistent": seam_consistent,
+                "seam_factor": seam_factor,
+                "seam_overlap_found": seam_overlap_found,
+                "corporate_action_in_window": action_in_window,
+                "series_max_move_explained": max_move_explained,
+                "adj_close_basis_used": bool((ratio - 1.0).abs().max() > 0.001 or abs(seam_factor - 1.0) > 0.001),
+                "share_class_consistent": share_class_consistent,
             }
         )
 
@@ -560,7 +638,7 @@ def _load_stooq_prices(
 
 
 _FRESH_OVERLAY_ENABLED = os.getenv("SCREENER_FRESH_OVERLAY", "1") != "0"
-_OVERLAY_COLUMNS = ["ticker", "as_of_date", "open", "high", "low", "close", "volume"]
+_OVERLAY_COLUMNS = ["ticker", "as_of_date", "open", "high", "low", "close", "adj_close", "volume"]
 _WARM_STORE_DIR = Path(__file__).resolve().parents[2] / "data" / "prices" / "parquet"
 
 
@@ -612,6 +690,36 @@ def _overlay_fresh_prices(
     base["as_of_date"] = pd.to_datetime(base["as_of_date"])
     base["ticker"] = base["ticker"].astype(str).str.upper()
     base = base[[c for c in _OVERLAY_COLUMNS if c in base.columns]]
+
+    # T132a (Phase 5): Apply seam back-adjustment to Stooq data per ticker
+    # so historical bars are on the same adjusted basis as yfinance.
+    adjusted_bases = []
+    for ticker, ticker_base in base.groupby("ticker"):
+        ticker_fresh = fresh[fresh["ticker"] == ticker]
+        # Whether an overlapping-bar window actually exists to verify the seam
+        # (mirrors calculate_seam_factor's >=2 shared-dates requirement). This
+        # separates "verified inconsistent" from "couldn't verify" downstream.
+        overlap_found = (
+            len(set(ticker_base["as_of_date"]) & set(ticker_fresh["as_of_date"])) >= 2
+        )
+        factor, consistent = calculate_seam_factor(ticker_base, ticker_fresh)
+        adj_base = apply_seam_adjustment(ticker_base, factor)
+        adj_base["seam_factor"] = factor
+        adj_base["seam_consistent"] = consistent
+        adj_base["seam_overlap_found"] = overlap_found
+        adjusted_bases.append(adj_base)
+
+    if adjusted_bases:
+        base = pd.concat(adjusted_bases, ignore_index=True)
+    else:
+        base["seam_factor"] = 1.0
+        base["seam_consistent"] = False
+        base["seam_overlap_found"] = False
+
+    # Fresh (yfinance) is the basis, so factor is 1.0 and consistent is True.
+    fresh["seam_factor"] = 1.0
+    fresh["seam_consistent"] = True
+    fresh["seam_overlap_found"] = True
 
     base["_src"] = 0  # Stooq
     fresh["_src"] = 1  # yfinance overlay wins on overlap (keep="last")
@@ -715,6 +823,13 @@ def _edgar_profiles(tickers: list[str]) -> dict[str, dict[str, Any]]:
         if sector == "Unclassified" and warm.get("sector"):
             sector = str(warm["sector"])
         out[ticker] = {
+            # The symbol the fundamentals were resolved under. EDGAR + the warm
+            # overlay are both keyed by this exact ticker, so it equals the price
+            # ticker (the share-class guard reads `share_class_consistent`). Set
+            # explicitly (was relying on a None default) so the FR-014 invariant
+            # is live and symmetric with the yfinance profile path, and fires if a
+            # future path ever resolves fundamentals under a different symbol.
+            "ticker": ticker,
             "name": str(warm.get("name") or ticker),
             "sector": sector,
             "fcf_ttm": (
@@ -1054,6 +1169,38 @@ def run_strategy(
     )
 
 
+def _apply_output_contract(
+    strategy, results: pd.DataFrame, data_notes: list[str]
+) -> pd.DataFrame:
+    """Run the strategy's output contract over its returned candidates (FR-001).
+
+    Adds the ``data_integrity_warnings`` / ``data_suspect`` columns the candidate
+    loop reads, routes aggregate-severity breaches + a "flagged N of M" honesty
+    note into ``data_notes`` (FR-004), and is a no-op for contract-less strategies.
+    Deterministic and no-network — the shared engine never re-fetches (FR-024)."""
+    contract = getattr(strategy, "output_contract", None)
+    if contract is None or results.empty:
+        return results
+    annotated = evaluate_contract(results, contract)
+    for note in annotated.attrs.get("integrity_notes", []):
+        if note not in data_notes:
+            data_notes.append(note)
+    n_total = int(len(annotated))
+    n_flagged = (
+        int(annotated["data_suspect"].sum())
+        if "data_suspect" in annotated.columns
+        else 0
+    )
+    if n_flagged:
+        data_notes.append(
+            f"data-integrity check flagged {n_flagged} of {n_total} returned"
+            " candidate(s) as data-suspect; flagged names are demoted below all"
+            " clean candidates and carry a per-candidate warning — verify before"
+            " acting"
+        )
+    return annotated
+
+
 def _screen_from_universe(
     strategy,
     strategy_slug: str,
@@ -1140,15 +1287,25 @@ def _screen_from_universe(
             universe.attrs["min_momentum_12_1"] = parameters_snapshot["min_momentum_12_1"]
         results = strategy.rules(universe)
         data_notes.extend(results.attrs.get("gates_skipped", []))
+        # Feature 008 (T013): validate every returned candidate against the
+        # strategy's declared output contract — deterministic, no network
+        # (FR-002/FR-024). Flagged names are annotated + demoted, never dropped.
+        results = _apply_output_contract(strategy, results, data_notes)
         if not results.empty and {"score", "ticker"}.issubset(results.columns):
-            # Tiered gates (Decision 7): rank cleanest (fewest warnings) first,
-            # then by momentum score. Falls back to score-only when no warnings col.
+            # Sort key (FR-018): data-suspect names sink below ALL clean names
+            # regardless of raw score; then tiered cleanliness (fewest soft
+            # warnings), then momentum score, then ticker for a stable order.
+            sort_cols: list[str] = []
+            sort_asc: list[bool] = []
+            if "data_suspect" in results.columns:
+                sort_cols.append("data_suspect")
+                sort_asc.append(True)  # False (clean) sorts first
             if "warning_count" in results.columns:
-                results = results.sort_values(
-                    ["warning_count", "score", "ticker"], ascending=[True, False, True]
-                )
-            else:
-                results = results.sort_values(["score", "ticker"], ascending=[False, True])
+                sort_cols.append("warning_count")
+                sort_asc.append(True)
+            sort_cols += ["score", "ticker"]
+            sort_asc += [False, True]
+            results = results.sort_values(sort_cols, ascending=sort_asc)
 
     # Price-bar freshness: warn when the newest bar backing this screen is older
     # than 3 business days (entry/stop/take-profit levels would be stale).
@@ -1287,6 +1444,14 @@ def _screen_from_universe(
                 ),
                 gate_results=getattr(row, "gate_results", None) or [],
                 warnings=list(getattr(row, "warnings", None) or []),
+                # Feature 008: candidate-severity contract violations (FR-017).
+                data_integrity_warnings=[
+                    DataIntegrityWarning(
+                        figure=v.figure, rule=v.invariant_name, reason=v.reason
+                    )
+                    for v in (getattr(row, "data_integrity_warnings", None) or [])
+                ],
+                data_suspect=bool(getattr(row, "data_suspect", False)),
                 shariah_compliant=(
                     shariah_status.is_compliant if shariah_status else None
                 ),
@@ -1314,6 +1479,15 @@ def _screen_from_universe(
                     event_snapshot.recent_8k_count_30d if event_snapshot else 0
                 ),
                 events_source_as_of=event_source_as_of,
+                # §8 Series-integrity signals
+                series_dates_ok=bool(getattr(row, "series_dates_ok", True)),
+                series_max_session_move=float(getattr(row, "series_max_session_move", 0.0)),
+                seam_consistent=bool(getattr(row, "seam_consistent", True)),
+                seam_factor=float(getattr(row, "seam_factor", 1.0)),
+                seam_overlap_found=bool(getattr(row, "seam_overlap_found", True)),
+                corporate_action_in_window=bool(getattr(row, "corporate_action_in_window", False)),
+                adj_close_basis_used=bool(getattr(row, "adj_close_basis_used", True)),
+                share_class_consistent=bool(getattr(row, "share_class_consistent", True)),
             )
         )
 

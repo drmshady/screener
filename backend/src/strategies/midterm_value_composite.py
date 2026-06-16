@@ -21,6 +21,11 @@ from pathlib import Path
 import pandas as pd
 
 from ..models.strategy import BacktestSummary, Modification, Strategy, StrategyParameter
+from ..screening.integrity.contract import OutputContract
+from ..screening.integrity.invariants import (
+    aggregate_flag_count,
+    value_domain_bounded,
+)
 from ._helpers.reference_thresholds import load_reference_thresholds
 from ._helpers.sector_rank import rank_within_sector
 from ._helpers.value_composite import compute_value_composite
@@ -609,6 +614,50 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
     return _with_notes(matched)
 
 
+# Output-integrity contract (feature 008, T014; output-contract.schema.md FR-006).
+# The value strategy's existing implausibility backstop (engine._value_row_fields)
+# drops every value yield when any one blows past its bound, because they share the
+# market-cap denominator — a corrupted (stale/wrong-unit) share count makes them all
+# implausible at once. Re-expressed here as declarative value-domain invariants over
+# the SAME strategy-agnostic engine, with NO engine change and NO behaviour/baseline
+# change to the strategy (SC-009/SC-010): the inline backstop still runs; this proves
+# the protective logic is one shared contract form, not per-strategy engine code.
+# Bounds mirror the inline backstop exactly (|book/market|>25, |earnings|>3,
+# |cash-flow|>3, |sales|>50).
+_VALUE_BACKSTOP = "value yield is implausibly large — the market cap (share count) is not trustworthy; verify before acting"
+
+OUTPUT_CONTRACT = OutputContract(
+    strategy_slug="midterm_value_composite",
+    invariants=[
+        value_domain_bounded(
+            name="value_domain.book_to_market",
+            figure="book_to_market",
+            limit=25.0,
+            message=_VALUE_BACKSTOP,
+        ),
+        value_domain_bounded(
+            name="value_domain.earnings_yield",
+            figure="earnings_yield",
+            limit=3.0,
+            message=_VALUE_BACKSTOP,
+        ),
+        value_domain_bounded(
+            name="value_domain.cashflow_yield",
+            figure="cashflow_yield",
+            limit=3.0,
+            message=_VALUE_BACKSTOP,
+        ),
+        value_domain_bounded(
+            name="value_domain.sales_yield",
+            figure="sales_yield",
+            limit=50.0,
+            message=_VALUE_BACKSTOP,
+        ),
+        aggregate_flag_count(),
+    ],
+)
+
+
 strategy = Strategy(
     slug="midterm_value_composite",
     name=NAME,
@@ -623,6 +672,7 @@ strategy = Strategy(
     modifications=MODIFICATIONS,
     rules=rules,
     backtest_summary=_load_backtest_summary(),
+    output_contract=OUTPUT_CONTRACT,
 )
 
 registry.register(strategy)

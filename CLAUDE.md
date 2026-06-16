@@ -1,11 +1,30 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/006-midterm-sidebyside-compare/plan.md` (active feature 006), which builds
-on the 005 value strategy, 004 advisor export, 003 comparison, 002 validation,
-and 001 MVP below.
+`specs/008-momentum-data-integrity/plan.md` (active feature 008), which builds
+on the 006 side-by-side compare, 005 value strategy, 004 advisor export, 003
+comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 006-midterm-sidebyside-compare
+## Active feature: 008-momentum-data-integrity
+
+Make the screener **detect when its own strategy output is wrong** via a
+strategy-agnostic, invariant/contract-based detector (each strategy declares a
+machine-checkable output contract; a shared engine validates every candidate).
+Enforced from one definition in two places: a deterministic, no-network check on
+**every live screen** (flagged candidates get a loud per-candidate
+data-integrity warning and are **demoted below all clean candidates**, never
+excluded) and an **offline harness** (seeded-defect regression as a blocking CI
+gate + an independent free-tier-vendor cross-check, on-demand, non-blocking).
+Momentum is the pilot. Alongside detection, the known momentum data defects are
+remediated: `return_12_1`/`52w_high` compute from a split+dividend-adjusted
+series (displayed entry stays the latest raw close), the cross-source seam stops
+dropping `adj_close` and is back-adjusted onto one basis via the existing 5-day
+overlap (flag where it can't be guaranteed), and price/fundamentals never cross
+share classes. No strategy rule, default, citation, or backtest baseline
+changes — detection, data correctness, and presentation only. Plan:
+`specs/008-momentum-data-integrity/plan.md`.
+
+## Prior feature: 006-midterm-sidebyside-compare
 
 Add a **live-screen, four-variant side-by-side run** for the mid-term band plus a
 **single four-variant advisor-prompt export**. In one action it runs both

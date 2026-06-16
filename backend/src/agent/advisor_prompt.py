@@ -205,6 +205,10 @@ def _candidate_block(result: AnalyzeResponse) -> str:
         ),
         f"- Take-profit: {result.take_profit}",
     ]
+    if getattr(result, "data_integrity_warnings", []):
+        lines.append("### DATA INTEGRITY WARNING (verify before acting)")
+        for w in result.data_integrity_warnings:
+            lines.append(f"- {w.reason}")
     if rr is not None:
         lines.append(f"- Reward:risk = {rr}")
     lines.extend(_diagnostics_lines(result))
@@ -344,6 +348,9 @@ def _candidate_summary_block(c, *, sector_gate_on: bool = False) -> str:
         + (f" | R:R {rr}" if rr else "")
     )
     lines = [head, levels]
+    if getattr(c, "data_integrity_warnings", []):
+        for w in c.data_integrity_warnings:
+            lines.append(f"### DATA INTEGRITY WARNING: {w.reason}")
     lines.extend(_diagnostics_lines(c))
     gate_bits = []
     for g in c.gate_results:

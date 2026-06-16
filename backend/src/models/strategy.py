@@ -2,11 +2,24 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel, Field, computed_field
 import pandas as pd
 
+from backend.src.screening.integrity.contract import OutputContract
+
 
 class Modification(BaseModel):
     name: str
     description: str
     citation: str
+
+
+class DataIntegrityWarning(BaseModel):
+    """Per-candidate serialization of a candidate-severity contract violation
+    (data-model §4). Distinct from the soft-gate ``warnings: list[str]`` — a
+    data-integrity warning means a figure may be wrong, not that a soft gate is
+    unmet. ``reason`` travels verbatim into the advisor prompt (FR-019)."""
+
+    figure: Optional[str] = None
+    rule: str
+    reason: str
 
 
 class StrategyParameter(BaseModel):
@@ -44,6 +57,9 @@ class Strategy(BaseModel):
     modifications: List[Modification]
     backtest_summary: Optional[BacktestSummary] = None
     rules: Callable[[pd.DataFrame], pd.DataFrame] = Field(exclude=True)
+    # Optional so contract-less strategies still load (data-model §6); momentum
+    # and value declare one. Predicates are excluded from serialization.
+    output_contract: Optional[OutputContract] = None
 
     @computed_field
     @property
@@ -104,6 +120,11 @@ class Candidate(BaseModel):
     f_score_evaluable: Optional[int] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    # Feature 008: candidate-severity contract violations (data-model §5).
+    # Additive + optional, so existing API consumers are unaffected. Kept
+    # separate from the soft-gate ``warnings`` above.
+    data_integrity_warnings: List[DataIntegrityWarning] = Field(default_factory=list)
+    data_suspect: bool = False
     shariah_compliant: Optional[bool] = None
     shariah_source_kind: Optional[str] = None
     shariah_external_source_name: Optional[str] = None
@@ -115,6 +136,18 @@ class Candidate(BaseModel):
     days_to_earnings: Optional[int] = None
     recent_8k_count_30d: int = 0
     events_source_as_of: Optional[str] = None
+    # §8 Series-integrity signals
+    series_dates_ok: Optional[bool] = None
+    series_max_session_move: Optional[float] = None
+    seam_consistent: Optional[bool] = None
+    seam_factor: Optional[float] = None
+    # Whether an overlapping-bar window was actually found to verify the seam.
+    # Distinguishes "verified inconsistent" (overlap found, factor unstable) from
+    # "unverified" (no overlapping bars to confirm one basis).
+    seam_overlap_found: Optional[bool] = None
+    corporate_action_in_window: Optional[bool] = None
+    adj_close_basis_used: Optional[bool] = None
+    share_class_consistent: Optional[bool] = None
 
 
 class ScreenResult(BaseModel):
@@ -164,6 +197,9 @@ class AnalyzeResponse(BaseModel):
     f_score_evaluable: Optional[int] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     data_notes: List[str] = Field(default_factory=list)
+    # Feature 008: integrity warnings (data-model §5).
+    data_integrity_warnings: List[DataIntegrityWarning] = Field(default_factory=list)
+    data_suspect: bool = False
     data_as_of: str
     disclaimer: str
 
@@ -182,6 +218,28 @@ class ScreenAdvisorPromptResponse(BaseModel):
     candidate_count: int
     personal_use_directive: bool
     prompt: str
+    data_as_of: str
+    disclaimer: str
+
+
+class IndependentVerifyResponse(BaseModel):
+    """On-demand independent cross-check of one candidate against a free-tier
+    third-party vendor (Finnhub primary / Alpha Vantage fallback). Explicitly
+    user-triggered — NOT part of the deterministic, network-free live screen
+    (FR-002/FR-024). ``key_configured`` is False when no
+    ``SCREENER_INDEPENDENT_QUOTE_API_KEY`` is set (→ verdict UNVERIFIED)."""
+
+    ticker: str
+    screener_price: Optional[float] = None
+    screener_52w_high: Optional[float] = None
+    independent_price: Optional[float] = None
+    independent_52w_high: Optional[float] = None
+    independent_source: str
+    divergence_pct: Optional[float] = None
+    verdict: str
+    screener_flagged: bool = False
+    key_configured: bool = False
+    fetched_at: str
     data_as_of: str
     disclaimer: str
 

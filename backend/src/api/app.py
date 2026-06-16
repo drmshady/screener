@@ -20,6 +20,7 @@ from . import (
     shariah,
     sizing,
     strategies,
+    verify,
 )
 
 app = FastAPI(title="US Stock Screener MVP")
@@ -87,3 +88,4 @@ app.include_router(sizing.router)
 app.include_router(portfolio.router)
 app.include_router(screen.router)
 app.include_router(data.router)
+app.include_router(verify.router)

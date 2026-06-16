@@ -26,6 +26,12 @@ export const ModificationSchema = z.object({
   citation: z.string(),
 });
 
+export const DataIntegrityWarningSchema = z.object({
+  figure: z.string().nullable().optional(),
+  rule: z.string(),
+  reason: z.string(),
+});
+
 export const StrategySchema = z.object({
   slug: z.string(),
   name: z.string(),
@@ -70,6 +76,14 @@ export const CandidateSchema = z.object({
   rank: z.number(),
   score: z.number(),
   reason: z.string(),
+  return_12_1: z.number().nullable().optional(),
+  vol_scalar: z.number().nullable().optional(),
+  dist_to_high: z.number().nullable().optional(),
+  atr: z.number().nullable().optional(),
+  debt_to_equity: z.number().nullable().optional(),
+  fcf_ttm: z.number().nullable().optional(),
+  gp_to_assets: z.number().nullable().optional(),
+  asset_growth: z.number().nullable().optional(),
   gate_results: z
     .array(
       z.object({
@@ -81,6 +95,9 @@ export const CandidateSchema = z.object({
     .optional()
     .default([]),
   warnings: z.array(z.string()).optional().default([]),
+  // Feature 008: integrity warnings (data-model §5).
+  data_integrity_warnings: z.array(DataIntegrityWarningSchema).optional().default([]),
+  data_suspect: z.boolean().optional().default(false),
   // Value-composite diagnostics (midterm_value_composite); null/absent otherwise.
   value_composite: z.number().nullable().optional(),
   book_to_market: z.number().nullable().optional(),
@@ -100,6 +117,14 @@ export const CandidateSchema = z.object({
   days_to_earnings: z.number().nullable().optional(),
   recent_8k_count_30d: z.number(),
   events_source_as_of: z.string().nullable().optional(),
+  // §8 Series-integrity signals
+  series_dates_ok: z.boolean().nullable().optional(),
+  series_max_session_move: z.number().nullable().optional(),
+  seam_consistent: z.boolean().nullable().optional(),
+  seam_factor: z.number().nullable().optional(),
+  corporate_action_in_window: z.boolean().nullable().optional(),
+  adj_close_basis_used: z.boolean().nullable().optional(),
+  share_class_consistent: z.boolean().nullable().optional(),
 });
 
 export const ScreenResultSchema = z.object({
@@ -146,6 +171,8 @@ export const AnalyzeResponseSchema = z.object({
   sales_yield: z.number().nullable().optional(),
   f_score: z.number().nullable().optional(),
   f_score_evaluable: z.number().nullable().optional(),
+  data_integrity_warnings: z.array(DataIntegrityWarningSchema).optional().default([]),
+  data_suspect: z.boolean().optional().default(false),
   data_notes: z.array(z.string()).optional().default([]),
   data_as_of: z.string(),
   disclaimer: z.string(),
@@ -168,6 +195,27 @@ export const ScreenAdvisorPromptResponseSchema = z.object({
   data_as_of: z.string(),
   disclaimer: z.string(),
 });
+
+export const IndependentVerifyResponseSchema = z.object({
+  ticker: z.string(),
+  screener_price: z.number().nullable().optional(),
+  screener_52w_high: z.number().nullable().optional(),
+  independent_price: z.number().nullable().optional(),
+  independent_52w_high: z.number().nullable().optional(),
+  independent_source: z.string(),
+  divergence_pct: z.number().nullable().optional(),
+  verdict: z.string(),
+  screener_flagged: z.boolean().optional().default(false),
+  key_configured: z.boolean().optional().default(false),
+  fetched_at: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+export type IndependentVerifyResponse = z.infer<typeof IndependentVerifyResponseSchema>;
+
+export async function verifyCandidate(ticker: string): Promise<IndependentVerifyResponse> {
+  return fetchApi(`/candidate/${encodeURIComponent(ticker)}/verify`, IndependentVerifyResponseSchema);
+}
 
 export const TickerEventSchema = z.object({
   ticker: z.string().nullable().optional(),
