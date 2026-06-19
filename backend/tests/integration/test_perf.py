@@ -62,15 +62,26 @@ def test_current_broad_screen_meets_warm_cache_perf_budget():
 def test_candidate_and_home_dashboard_perf_budgets():
     client = TestClient(app)
 
+    # Use a ticker that is actually in the current screen; hardcoding a sample
+    # candidate makes this 404 whenever the snapshot drifts and that name ages out.
+    screen = run_strategy(
+        "midterm_52w_high_momentum",
+        parameters={"regime_gate": False, "refresh_events": False},
+        filters={"exclude_earnings_within_days": 0},
+    )
+    candidate_ticker = screen.candidates[0].ticker
+
     # Prime route-level caches, then measure returning-session behavior.
     assert client.get("/regime").status_code == 200
     assert client.get("/events/market?days_ahead=60").status_code == 200
-    assert client.get("/candidates/HFRO").status_code == 200
+    assert client.get(f"/candidates/{candidate_ticker}").status_code == 200
 
     candidate_samples = []
     dashboard_samples = []
     for _ in range(5):
-        seconds, response = _elapsed_seconds(lambda: client.get("/candidates/HFRO"))
+        seconds, response = _elapsed_seconds(
+            lambda: client.get(f"/candidates/{candidate_ticker}")
+        )
         assert response.status_code == 200
         candidate_samples.append(seconds)
 

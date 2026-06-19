@@ -34,6 +34,12 @@ backend/data/raw/
 backend/data/portfolio_state.json
 backend/backend/
 
+# Source-only price archives — consumed by build_stooq_parquet.py at build time,
+# never read at runtime (the engine reads prices/stooq_parquet, not these). Keeping
+# them out trims ~2.3 GB from the baked image (FR-006 slim snapshot scope).
+backend/data/prices/stooq/
+backend/data/prices/d_us_txt.zip
+
 # Secrets / keys must never enter the image (FR-010, SC-008)
 *.pem
 *.key

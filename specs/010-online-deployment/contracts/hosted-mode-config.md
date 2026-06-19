@@ -32,10 +32,13 @@
 
 ## Required runtime env (summary)
 
+This table is the **single canonical list** of required runtime env vars
+(`quickstart.md` C1/C2 and `render.yaml` mirror it; they must not diverge).
+
 | Service | Keys |
 |---|---|
-| Backend (Render) | `SCREENER_HOSTED_MODE=1`, `SCREENER_OWNER_SECRET`, frontend origin for CORS, (optional provider keys) |
-| Frontend (Vercel) | `SCREENER_HOSTED_MODE=1`, `NEXT_PUBLIC_SCREENER_HOSTED_MODE=1` (non-secret UI mode flag), `BACKEND_BASE_URL` (server-only), `SCREENER_OWNER_SECRET` (server-only), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_SECRET`, `SCREENER_OWNER_EMAIL` |
+| Backend (Render) | `SCREENER_HOSTED_MODE=1`, `SCREENER_OWNER_SECRET` (secret), `SCREENER_FRONTEND_ORIGIN` (the Vercel origin, for CORS), (optional provider keys) |
+| Frontend (Vercel) | `SCREENER_HOSTED_MODE=1`, `NEXT_PUBLIC_SCREENER_HOSTED_MODE=1` (non-secret UI mode flag), `BACKEND_BASE_URL` (server-only), `SCREENER_OWNER_SECRET` (server-only secret), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` (secret), `AUTH_SECRET` (secret), `SCREENER_OWNER_EMAIL` |
 
 ## Acceptance
 

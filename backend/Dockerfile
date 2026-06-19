@@ -6,8 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Runtime needs no compiler: every dependency installs from a prebuilt manylinux
+# wheel (no sdist builds), so build-essential is pure image bloat (~350 MB+).
+# Keep only curl for in-container debugging; the platform health check is HTTP.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/pyproject.toml /tmp/backend-pyproject.toml

@@ -114,7 +114,14 @@ test.describe('hosted owner usable flow', () => {
     await expect(page.getByText('212.00')).toBeVisible();
     await expect(page.getByText('Liquidity')).toBeVisible();
     await expect(page.getByText('Data is current for latest completed session 2026-07-06.')).toBeVisible();
-    await expect(page.getByText('Informational only.')).toBeVisible();
+    // data_as_of from the response renders in the layout header (FR-008).
+    await expect(page.getByText(/Data as of 2026-07-06/).first()).toBeVisible();
+    // The layout shell renders the canonical disclaimer unconditionally (the
+    // per-response `disclaimer` field is carried for provenance, not echoed
+    // verbatim in the UI).
+    await expect(
+      page.getByText(/informational purposes only and does not constitute financial advice/i),
+    ).toBeVisible();
     await expect(page.getByText(/buy|sell|recommended|strong buy/i)).toHaveCount(0);
   });
 
@@ -143,7 +150,10 @@ test.describe('hosted owner usable flow', () => {
     await page.goto('/screen/midterm_52w_high_momentum');
     await page.getByRole('button', { name: 'Run Screen' }).click();
 
-    await expect(page.getByText(/Running screen/)).toBeVisible();
+    // The cold-start loading affordance: the run button flips to "Running..."
+    // while the (mocked, delayed) screen resolves — the app stays usable, no
+    // error page.
+    await expect(page.getByRole('button', { name: 'Running...' })).toBeVisible();
     await expect(page.getByText('No candidates matched the active filters.')).toBeVisible();
   });
 });

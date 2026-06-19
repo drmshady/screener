@@ -52,7 +52,14 @@ test('strategy page mounts equity and yearly charts with citations', async ({ pa
 });
 
 test('candidate page mounts price chart with level labels', async ({ page }) => {
-  await page.goto('/candidate/HFRO');
+  // Derive a live candidate from the screen; hardcoding a name breaks this page
+  // whenever the data snapshot drifts and that ticker ages out of the screen.
+  await page.goto('/screen/midterm_52w_high_momentum');
+  await page.getByRole('button', { name: 'Run Screen' }).click();
+  const firstCandidate = page.locator('a[href^="/candidate/"]').first();
+  await expect(firstCandidate).toBeVisible({ timeout: 45_000 });
+  const href = await firstCandidate.getAttribute('href');
+  await page.goto(href!);
 
   await expect(page.getByTestId('candidate-price-chart')).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText('Entry level')).toBeVisible();

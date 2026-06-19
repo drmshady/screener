@@ -63,6 +63,11 @@ any file in the repo.
 
 ---
 
+> The full required-env list is canonicalised in
+> [`contracts/hosted-mode-config.md`](contracts/hosted-mode-config.md) (backend
+> Render set + frontend Vercel server-only set). The C1/C2 lists below and
+> `render.yaml` mirror it — keep all three in sync.
+
 ## C. Deploy
 
 ### C1. Backend → Render (Docker web service)
@@ -72,10 +77,15 @@ any file in the repo.
 2. Environment (runtime, never committed):
    - `SCREENER_HOSTED_MODE=1`
    - `SCREENER_OWNER_SECRET=<from A2>`
-   - frontend origin (for CORS) = the Vercel URL (set after C2; redeploy)
+   - `SCREENER_FRONTEND_ORIGIN=https://<your-vercel-app>.vercel.app` — pins CORS
+     to the frontend origin (set after C2; redeploy).
    - (optional) provider keys — if absent, the optional paid/cross-check path
      stays disabled and the free path works (Edge Cases).
-3. Health check path: `/data/freshness` (read-only, validates the snapshot).
+   These match the `render.yaml` env block (`sync: false` keys are entered in the
+   Render dashboard, never committed).
+3. Health check path: `/health` (validates `manifest.json` + key stores; returns
+   503 maintenance until the snapshot is complete, so the atomic swap keeps the
+   last good image serving). Already declared as `healthCheckPath` in `render.yaml`.
 4. Deploy → note the backend URL `https://<backend>.onrender.com`.
 
 > Free web service **sleeps after idle**; the first request cold-starts (accepted,
@@ -120,9 +130,13 @@ any file in the repo.
 6. **Directive forced OFF** (SC-007) — even with
    `SCREENER_PERSONAL_USE_DIRECTIVE=1` set in env, exported prompt is neutral; the
    Playwright no-directive lint passes against the hosted build.
-7. **No secrets leaked** (SC-008) — secret scan over the repo + the assembled
-   image finds zero provider keys/owner secrets; inspecting the browser bundle
-   shows no backend URL or owner secret.
+7. **No secrets leaked** (SC-008) — run the release secret scan over the repo +
+   the assembled image copy list; it must exit 0 with zero findings:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\secret_scan.ps1
+   ```
+   Then inspect the deployed browser bundle/network tab and confirm no backend
+   URL or owner secret appears (both are server-only env, never `NEXT_PUBLIC_*`).
 
 ---
 

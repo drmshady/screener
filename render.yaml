@@ -1,9 +1,17 @@
 services:
   - type: web
     name: screener-backend
-    runtime: docker
+    # Deploy a prebuilt image (Option 1): the slim read-only snapshot is baked
+    # locally via backend/Dockerfile, pushed to GHCR, then pulled by Render. The
+    # host runs no build and no ingest (FR-004/005/006/007). New data is shipped
+    # by republishing the image and triggering the Deploy Hook (publish.ps1).
+    runtime: image
     plan: free
-    dockerfilePath: ./backend/Dockerfile
+    image:
+      # Lowercase owner/name required by GHCR. Tag pinned to :latest; the Deploy
+      # Hook pulls whatever :latest currently points at. Private package: add the
+      # GHCR credential in the Render dashboard — never commit the token here.
+      url: ghcr.io/drmshady/screener:latest
     healthCheckPath: /health
     envVars:
       - key: SCREENER_HOSTED_MODE

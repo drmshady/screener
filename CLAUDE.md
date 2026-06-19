@@ -6,7 +6,34 @@ shell commands, and other important information, read the current plan:
 value strategy, 004 advisor export, 003 comparison, 002 validation, and 001 MVP
 below.
 
-## Active feature: 009-release-readiness
+## Active feature: 010-online-deployment
+
+Make the already-assembled, release-ready screener (009) reachable over the public
+internet for the **single owner**, staying **free**, **single-user**, and within the
+constitution. A **deployment / access** feature only — **no new strategy and no
+strategy rule, default, citation, indicator, or backtest baseline change** (FR-013);
+computation paths stay byte-identical to 009. It introduces the constitution's
+**hosted mode** for the first time, so the hosted-clause obligations re-attach:
+`personal_use_directive()` is **forced OFF and non-waivable** when hosted mode is on
+(FR-009), and `data_as_of` + `disclaimer` ride every response (FR-008). Three design
+decisions: (1) **hosting = Render free Docker web service (backend) + Vercel free
+(frontend)**, platform HTTPS, accepted cold starts (FR-011); (2) **access gate =
+NextAuth (Auth.js) Google sign-in + single-email allowlist fronting a same-origin BFF
+proxy** — the browser only ever talks to the Next app; server-side route handlers
+inject a process-local `X-Owner-Secret` that the FastAPI owner-secret dependency
+requires on **all** routers, so unauthenticated/non-owner traffic (incl. direct
+backend hits) reaches **no** data (FR-002/003/015); (3) **snapshot delivery = baked
+read-only into the backend image**, atomic swap so the host **never serves a
+partial/corrupt snapshot** (FR-006) and runs **no heavy in-host ingest** (`POST
+/data/refresh` blocked in hosted mode; refresh is local-then-republish, FR-004/005/007).
+Hosted-mode config (`backend/src/lib/hosting.py`) is fail-fast (refuses to boot if a
+required secret is missing); CORS pins to the deployed frontend origin. Secrets are
+runtime env only — never committed or written to any artifact file (FR-010, SC-008;
+`scripts/secret_scan.ps1` is a release check). Determinism preserved end-to-end
+(FR-012, SC-004). Momentum primary; value postponed (009 scope) but its tests pass.
+Plan: `specs/010-online-deployment/plan.md`.
+
+## Prior feature: 009-release-readiness
 
 A stabilization / release-readiness pass over the assembled screener — **no new
 strategy and no strategy rule, default, citation, or backtest baseline change**.

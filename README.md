@@ -43,6 +43,28 @@ npm.cmd run start
 
 Open `http://127.0.0.1:3000`.
 
+## Deploy Online (single-owner, free)
+
+To reach the screener over the public internet for the **single owner** while
+staying free and within the constitution, follow the deployment runbook:
+`specs/010-online-deployment/quickstart.md` (Render free Docker backend + Vercel
+free Next.js frontend, gated by NextAuth Google sign-in with a single-email
+allowlist and a BFF proxy, serving a read-only data snapshot baked into the
+backend image).
+
+Hosted-mode constraints:
+
+- **Read-only host** — no heavy in-host ingest; "refresh" is performed locally
+  and republished by rebuilding the image (`POST /data/refresh` is blocked in
+  hosted mode; `GET /data/freshness` stays read-only).
+- **Single-user** — exactly one allowlisted owner email; no anonymous/public
+  access; no redistribution.
+- **Directive forced OFF** — the personal-use directive flag is forced off and
+  non-waivable in hosted mode (no env value can re-enable directive language).
+- **Secrets are runtime env only** — never commit a secret value or write one to
+  any file in the repo or image. The release secret scan enforces this:
+  `powershell -ExecutionPolicy Bypass -File scripts\secret_scan.ps1`.
+
 ## Validate
 
 ```powershell

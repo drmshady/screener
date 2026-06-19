@@ -31,6 +31,27 @@ def _call_case(client: TestClient, case: Any):
     return client.request(case.method, case.formatted_path, **kwargs)
 
 
+def _live_candidate_ticker() -> str:
+    """A ticker that is actually in the current momentum screen.
+
+    Hardcoding a sample candidate makes these cases break whenever the data
+    snapshot drifts and that name ages out of the screen (it 404s). Deriving it
+    live keeps the /candidates/{ticker} contract cases valid across refreshes.
+    """
+    from backend.src import strategies as _strategies  # noqa: F401 - register
+    from backend.src.screening.engine import run_strategy
+
+    result = run_strategy(
+        "midterm_52w_high_momentum",
+        parameters={"regime_gate": False, "refresh_events": False},
+        filters={"exclude_earnings_within_days": 0},
+    )
+    return result.candidates[0].ticker
+
+
+CANDIDATE_TICKER = _live_candidate_ticker()
+
+
 CONTRACT_CASES = [
     ("GET", "/healthz", {}),
     ("GET", "/meta", {}),
@@ -65,12 +86,12 @@ CONTRACT_CASES = [
             },
         },
     ),
-    ("GET", "/candidates/{ticker}", {"path_parameters": {"ticker": "HFRO"}}),
+    ("GET", "/candidates/{ticker}", {"path_parameters": {"ticker": CANDIDATE_TICKER}}),
     ("GET", "/analyze/{ticker}", {"path_parameters": {"ticker": "UNH"}}),
     (
         "GET",
         "/candidates/{ticker}/history",
-        {"path_parameters": {"ticker": "HFRO"}, "query": {"days": 400}},
+        {"path_parameters": {"ticker": CANDIDATE_TICKER}, "query": {"days": 400}},
     ),
     ("GET", "/regime", {}),
     ("GET", "/events/market", {"query": {"days_ahead": 60}}),
