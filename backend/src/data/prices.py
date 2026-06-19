@@ -8,6 +8,7 @@ from typing import List, Optional
 import pandas as pd
 import yfinance as yf
 
+from .market_calendar import latest_completed_trading_day
 from .prices_store import load_last_dates
 
 
@@ -25,28 +26,6 @@ class PriceProvider(ABC):
         volume, source_name, source_as_of.
         """
         raise NotImplementedError
-
-
-def _previous_business_day(value: date) -> date:
-    current = value
-    while current.weekday() >= 5:
-        current -= timedelta(days=1)
-    return current
-
-
-def latest_completed_trading_day(now: datetime | None = None) -> date:
-    """
-    Latest completed US trading session for yfinance EOD.
-
-    The US cash session closes ~20:00 UTC (21:00 UTC in winter). We treat today's
-    EOD bar as final only after a ~22:00 UTC settle buffer; before that the latest
-    completed session is the prior calendar day. `_previous_business_day` then rolls
-    weekends back. (The old logic subtracted two days before 23:00 UTC, so it
-    perpetually lagged a full trading day behind data yfinance already had.)
-    """
-    moment = now or datetime.now(timezone.utc)
-    anchor = moment.date() if moment.hour >= 22 else moment.date() - timedelta(days=1)
-    return _previous_business_day(anchor)
 
 
 class YFinancePriceProvider(PriceProvider):

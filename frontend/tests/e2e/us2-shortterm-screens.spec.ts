@@ -29,7 +29,8 @@ for (const strategy of strategies) {
     await page.getByRole('button', { name: COPY.SCREENER.RUN_SCREEN }).click();
     await expect(page.getByRole('heading', { name: 'Candidates' })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/matches for \d{4}-\d{2}-\d{2}/)).toBeVisible();
-    await expect(page.getByText('Stop / Distance')).toBeVisible();
+    const resultSurface = page.getByText('Stop / Distance').or(page.getByText('No candidates matched the active filters.'));
+    await expect(resultSurface.first()).toBeVisible();
   });
 }
 

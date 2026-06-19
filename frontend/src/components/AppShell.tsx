@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Disclaimer } from '@/components/Disclaimer';
 import { GlobalDataAsOf } from '@/components/GlobalDataAsOf';
 import { PortfolioSync } from '@/components/PortfolioSync';
+import { StartupFreshnessGate } from '@/components/StartupFreshnessGate';
 
 const NAV_LINKS = [
   { href: '/', label: 'Home' },
@@ -39,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
         </header>
+        <StartupFreshnessGate />
         <div className="flex-1">{children}</div>
         <footer className="border-t border-amber-200 bg-amber-50">
           <Disclaimer />

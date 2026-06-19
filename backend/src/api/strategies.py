@@ -19,9 +19,7 @@ from ..models.strategy import (
 from ..screening.engine import run_strategy
 from ..screening.midterm_matrix import run_midterm_matrix
 from ..strategies._registry import registry
-from .. import (
-    strategies as _strategies,
-)  # noqa: F401 - imports register strategy modules
+from .. import strategies as _strategies  # noqa: F401 - registers strategy modules
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
 
@@ -123,6 +121,10 @@ def run_strategy_endpoint(slug: str, request: ScreenRunRequest):
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Strategy not found") from None
+    except ValueError as exc:
+        # e.g. explicit `tickers` that resolve to no OHLCV data — fail gracefully
+        # like the analyze/candidate paths rather than crashing with a 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{slug}/advisor-prompt", response_model=ScreenAdvisorPromptResponse)
@@ -144,6 +146,8 @@ def screen_advisor_prompt(slug: str, request: ScreenRunRequest):
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Strategy not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     directive = personal_use_directive()
     prompt = build_screen_advisor_prompt(

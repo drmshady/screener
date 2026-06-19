@@ -1,19 +1,77 @@
 import { z } from 'zod';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = '/api/proxy';
+
+export function apiBaseUrlForTest() {
+  return API_BASE_URL;
+}
+
+const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
+
+export function hostedModeEnabled(): boolean {
+  return TRUTHY.has(
+    (process.env.NEXT_PUBLIC_SCREENER_HOSTED_MODE ?? process.env.SCREENER_HOSTED_MODE ?? '0')
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+export class ApiError extends Error {
+  status?: number;
+  retryable: boolean;
+
+  constructor(message: string, options?: { status?: number; retryable?: boolean; cause?: unknown }) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = options?.status;
+    this.retryable = options?.retryable ?? false;
+    if (options?.cause !== undefined) {
+      this.cause = options.cause;
+    }
+  }
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === 'string' && body.detail.trim()) {
+      return body.detail;
+    }
+    if (Array.isArray(body?.detail) && body.detail.length) {
+      return 'The request could not be completed. Check the inputs and retry.';
+    }
+    if (typeof body?.message === 'string' && body.message.trim()) {
+      return body.message;
+    }
+  } catch {
+    // Fall through to status-based copy.
+  }
+  return `The backend returned ${response.status}. Retry when the service is available.`;
+}
 
 export async function fetchApi<T>(endpoint: string, schema: z.ZodType<T>, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+  } catch (error) {
+    throw new ApiError('The backend is unreachable. Check the service and retry.', {
+      retryable: true,
+      cause: error,
+    });
+  }
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    throw new ApiError(await responseErrorMessage(response), {
+      status: response.status,
+      retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+    });
   }
 
   const data = await response.json();
@@ -288,6 +346,24 @@ export const MetaResponseSchema = z.object({
   data_as_of: z.string().optional(),
 });
 
+export const DataFreshnessSourceSchema = z.object({
+  source_name: z.string(),
+  kind: z.string(),
+  data_as_of: z.string().nullable(),
+  latest_session: z.string(),
+  sessions_behind: z.number().nullable(),
+  is_stale: z.boolean(),
+  last_refresh_outcome: z.string(),
+});
+
+export const DataFreshnessResponseSchema = z.object({
+  sources: z.array(DataFreshnessSourceSchema),
+  any_stale: z.boolean(),
+  latest_session: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
 export const BacktestResponseSchema = z.object({
   strategy_slug: z.string(),
   data_window_start: z.string(),
@@ -502,10 +578,18 @@ export const DataRefreshResponseSchema = z.object({
   fetched_rows: z.number(),
   latest_bar: z.string().nullable().optional(),
   capped: z.boolean(),
+  notices: z.array(z.string()).optional().default([]),
   data_as_of: z.string(),
   disclaimer: z.string(),
 });
 export type DataRefreshResponse = z.infer<typeof DataRefreshResponseSchema>;
+
+export type DataFreshnessSource = z.infer<typeof DataFreshnessSourceSchema>;
+export type DataFreshnessResponse = z.infer<typeof DataFreshnessResponseSchema>;
+
+export async function getDataFreshness(): Promise<DataFreshnessResponse> {
+  return fetchApi('/data/freshness', DataFreshnessResponseSchema);
+}
 
 export async function refreshData(market?: string): Promise<DataRefreshResponse> {
   const response = await fetch(`${API_BASE_URL}/data/refresh`, {

@@ -11,9 +11,7 @@ from ..lib.disclaimer import DISCLAIMER_TEXT
 from ..screening.engine import _load_stooq_prices, _overlay_fresh_prices, run_strategy
 from ..shariah.lookup import ShariahLookup
 from ..strategies._registry import registry
-from .. import (
-    strategies as _strategies,
-)  # noqa: F401 - imports register strategy modules
+from .. import strategies as _strategies  # noqa: F401 - registers strategy modules
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 

@@ -18,6 +18,7 @@ from ..screening.integrity.invariants import (
     value_domain_finite,
     value_domain_high_plausible,
     value_domain_positive,
+    value_domain_realized_vol_floor,
     value_domain_return_plausible,
 )
 from ._helpers.quality import gross_profitability_mask, passes_quality_screen
@@ -663,7 +664,7 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         gates_applied.append("top-half gross profitability" + (ref_tag if xs["gp_ref"] else ""))
     else:
         gates_skipped.append(
-            "gross-profitability gate skipped: gp_to_assets unavailable for this universe"
+            "gross-profitability gate skipped: missing gp_to_assets fundamentals for this universe"
         )
     if xs["ag_applied"]:
         gates_applied.append("low asset growth" + (ref_tag if xs["ag_ref"] else ""))
@@ -676,7 +677,7 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         gates_skipped.append(
             "asset-growth gate disabled (max_asset_growth_percentile=1.0)"
             if xs["ag_disabled"]
-            else "asset-growth gate skipped: asset_growth unavailable for this universe"
+            else "asset-growth gate skipped: missing asset_growth fundamentals for this universe"
         )
 
     # 1. 52-week high proximity
@@ -915,6 +916,13 @@ _RETURN_MIN = -0.95
 _RETURN_MAX = 9.0  # [A/B] +900%
 _HIGH_MAX_MULT = 12.0  # [A/B] 52w high at most 12x the close
 _JUMP_MAX = 0.40  # [A/B] largest plausible single-session move absent a known action
+# Realized-volatility floor (annualized). Below this, the vol_scalar saturates at
+# its 2.0 cap (cap is reached at target_volatility/2.0 = 0.06) and inflates the
+# score — the signature of a price pinned under a pending all-cash acquisition /
+# cash tender (the EA-at-its-$210-offer defect, realized vol ~6%). Set at 0.08 to
+# also catch the near-saturated band, while staying far below any genuine momentum
+# candidate's realized vol. Detect + demote + warn only (no rule/default change).
+_REALIZED_VOL_FLOOR = 0.08
 _FINITE_FIGURES = (
     "close",
     "52w_high",
@@ -966,6 +974,9 @@ OUTPUT_CONTRACT = OutputContract(
         value_domain_positive(["close", "atr"]),
         value_domain_return_plausible(lower=_RETURN_MIN, upper=_RETURN_MAX),
         value_domain_high_plausible(h_max=_HIGH_MAX_MULT),
+        # pinned-price / merger-arb guard: collapsed realized vol saturates the
+        # vol_scalar and inflates the score (the EA pending-acquisition defect).
+        value_domain_realized_vol_floor(min_annualized_vol=_REALIZED_VOL_FLOOR),
         # series — the backing history is well-formed and adjustment-consistent
         # (reads the §8 signals computed in US3; defaults safe until then)
         *series_integrity(jump_max=_JUMP_MAX),

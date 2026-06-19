@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional, Dict, List, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from enum import Enum
 
 from .provenance import SourceProvenance

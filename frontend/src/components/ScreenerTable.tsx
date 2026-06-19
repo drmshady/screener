@@ -3,6 +3,18 @@ import { COPY } from '@/lib/copy';
 import type { Candidate } from '@/lib/api';
 
 export function ScreenerTable({ candidates }: { candidates: Candidate[] }) {
+  if (candidates.length === 0) {
+    return (
+      <div className="border border-slate-200 bg-white p-4 text-sm text-slate-600">
+        <p className="font-medium text-slate-950">No candidates matched the active filters.</p>
+        <p className="mt-1">
+          Review the data completeness notes, adjust filters, or refresh stale sources before interpreting the
+          screen.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-hidden rounded-lg shadow ring-1 ring-black ring-opacity-5">
       <table className="min-w-full divide-y divide-gray-300">

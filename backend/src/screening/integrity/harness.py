@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Iterable, List, Optional, Sequence, Set
+from typing import Callable, List, Optional, Sequence, Set
 
 import pandas as pd
 
@@ -117,6 +117,19 @@ def default_seeded_defects(target_ticker: str) -> List[SeededDefect]:
     def share_class_swap(df: pd.DataFrame) -> pd.DataFrame:
         return _set(df, target_ticker, "share_class_consistent", False)
 
+    def pinned_price(df: pd.DataFrame) -> pd.DataFrame:
+        # A merger-arb pin (the EA-at-its-cash-offer defect): realized volatility
+        # collapses, saturating the vol_scalar at its 2.0 cap and inflating the
+        # score. With no daily_returns window on the fixture, the saturated
+        # vol_scalar is itself the pin signal the realized-vol-floor invariant
+        # reads. Update the score in lockstep so ONLY the value_domain floor fires
+        # (not score.reproduces), isolating the defect to its family.
+        mask = df["ticker"] == target_ticker
+        ret = float(df.loc[mask, "return_12_1"].iloc[0])
+        dist = float(df.loc[mask, "dist_to_high"].iloc[0])
+        df = _set(df, target_ticker, "vol_scalar", 2.0)
+        return _set(df, target_ticker, "score", ret * 2.0 / (1.0 + dist))
+
     def unexplained_jump_with_dividend(df: pd.DataFrame) -> pd.DataFrame:
         # A genuine bad-bar spike (large single-session move) co-occurring with a
         # routine corporate action SOMEWHERE in the window. A window-wide action
@@ -141,6 +154,7 @@ def default_seeded_defects(target_ticker: str) -> List[SeededDefect]:
         SeededDefect("seam_discontinuity", target_ticker, seam_discontinuity, "series"),
         SeededDefect("seam_unverified", target_ticker, seam_unverified, "series"),
         SeededDefect("share_class_swap", target_ticker, share_class_swap, "identity"),
+        SeededDefect("pinned_price", target_ticker, pinned_price, "value_domain"),
         SeededDefect(
             "unexplained_jump_with_dividend",
             target_ticker,

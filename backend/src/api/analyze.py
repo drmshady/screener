@@ -36,6 +36,17 @@ def _as_float(value) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
+def _material_input_freshness(data_as_of: str, as_of: str | None = None) -> dict[str, str]:
+    snapshot_date = data_as_of[:10]
+    regime_as_of = as_of or snapshot_date
+    return {
+        "prices": snapshot_date,
+        "fundamentals": snapshot_date,
+        "regime": regime_as_of[:10],
+    }
+
+
 _DEFAULT_SHARIAH_SOURCES = [
     "spus_holdings", "spwo_holdings", "spre_holdings", "spte_holdings", "halal_terminal",
 ]
@@ -201,6 +212,7 @@ def compute_candidate_result(
         asset_growth=_as_float(row.get("asset_growth")),
         gate_results=gate_results,
         data_notes=data_notes,
+        material_input_freshness=_material_input_freshness(data_as_of, as_of),
         data_as_of=data_as_of,
         disclaimer=DISCLAIMER_TEXT,
     )
@@ -283,6 +295,7 @@ def _compute_value_candidate_result(
         f_score_evaluable=int(f_eval) if f_eval is not None and not pd.isna(f_eval) else None,
         gate_results=gate_results,
         data_notes=data_notes,
+        material_input_freshness=_material_input_freshness(data_as_of, as_of),
         data_as_of=data_as_of,
         disclaimer=DISCLAIMER_TEXT,
     )

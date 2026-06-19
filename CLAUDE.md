@@ -1,11 +1,33 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/008-momentum-data-integrity/plan.md` (active feature 008), which builds
-on the 006 side-by-side compare, 005 value strategy, 004 advisor export, 003
-comparison, 002 validation, and 001 MVP below.
+`specs/010-online-deployment/plan.md` (active feature 010), which builds on the
+009 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005
+value strategy, 004 advisor export, 003 comparison, 002 validation, and 001 MVP
+below.
 
-## Active feature: 008-momentum-data-integrity
+## Active feature: 009-release-readiness
+
+A stabilization / release-readiness pass over the assembled screener — **no new
+strategy and no strategy rule, default, citation, or backtest baseline change**.
+Four workstreams: (1) **refresh-on-start** — a read-only, no-mutation startup
+staleness check (`GET /data/freshness`, ≤ 3 s, latest-completed-trading-session
+basis) that prompts the operator to refresh now (reusing the existing incremental
+`POST /data/refresh`) or proceed on cached data — never silent/automatic;
+(2) **advisor-prompt completeness** — make the export self-contained by adding
+per-material-input freshness, keeping integrity warnings verbatim and the honesty
+block driven by the real backtest bias check (builder stays pure/deterministic);
+(3) **correctness, bug scan, cleanup & robustness** — full backend + frontend
+suites green on a clean checkout (0 silently skipped financial-logic tests), a
+bounded bug scan (`bug-scan-log.md`) with block-on-correctness/integrity/crash
+fixes, dead-code removal, and graceful empty/missing/timeout paths — all
+determinism-preserving; (4) **deployment readiness** — a reproducible production
+runbook (`quickstart.md`) with documented data dirs + process-local keys, ending
+in a suite-green commit. Momentum is primary; value is postponed (feature 007 not
+merged) but its existing tests must still pass. Plan:
+`specs/009-release-readiness/plan.md`.
+
+## Prior feature: 008-momentum-data-integrity
 
 Make the screener **detect when its own strategy output is wrong** via a
 strategy-agnostic, invariant/contract-based detector (each strategy declares a

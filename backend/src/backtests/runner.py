@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-import os
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -11,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import yfinance as yf
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))

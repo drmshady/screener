@@ -55,6 +55,7 @@ def test_severities_are_candidate_except_the_flag_count_note():
         "value_domain.positive",
         "value_domain.return_plausible",
         "value_domain.high_plausible",
+        "value_domain.realized_vol_floor",
         "series.dates_ok",
         "series.no_unexplained_jump",
         "series.seam_consistent",

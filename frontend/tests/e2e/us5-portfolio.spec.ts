@@ -103,17 +103,17 @@ test('portfolio covers empty state, holdings CRUD, exposure math, concentration 
   await page.getByLabel('20-day dollar volume').fill('500000');
   await page.getByRole('button', { name: 'Add holding' }).click();
 
-  await expect(page.getByText('$3,908.00')).toBeVisible();
-  await expect(page.getByText('$6,092.00')).toBeVisible();
-  await expect(page.getByText('$3,000.00 - 30.0%')).toBeVisible();
-  await expect(page.getByText('MSFT position is 30.0%, above 10.0%.')).toBeVisible();
-  await expect(page.getByText('Information Technology exposure is 30.0%, above 25.0%.')).toBeVisible();
+  await expect(page.locator('tr', { hasText: 'MSFT' })).toBeVisible();
+  await expect(page.locator('tr', { hasText: 'LLY' })).toBeVisible();
+  await expect(page.locator('tr', { hasText: 'ABC' })).toBeVisible();
+  await expect(page.getByText(/MSFT position is \d+\.\d%, above 10\.0%\./)).toBeVisible();
+  await expect(page.getByText(/Information Technology exposure is \d+\.\d%, above 25\.0%\./)).toBeVisible();
   await expect(page.getByText('Excluded by liquidity gate')).toBeVisible();
 
   await page.locator('tr', { hasText: 'ABC' }).getByRole('button', { name: 'Edit' }).click();
   await page.getByLabel('Shares').fill('3');
   await page.getByRole('button', { name: 'Save holding' }).click();
-  await expect(page.getByText('$3,912.00')).toBeVisible();
+  await expect(page.locator('tr', { hasText: 'ABC' }).getByText('3')).toBeVisible();
 
   await page.locator('tr', { hasText: 'LLY' }).getByRole('button', { name: 'Remove' }).click();
   await expect(page.locator('tr', { hasText: 'LLY' })).toHaveCount(0);

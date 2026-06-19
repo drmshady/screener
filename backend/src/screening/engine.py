@@ -19,17 +19,13 @@ from ..data.universe import UniverseLoader
 from ..data.market_calendar import drop_market_weekends, market_of, trading_days_between
 from ..events.service import EventsService, TickerEventsSnapshot
 from ..indicators.seam_adjust import apply_seam_adjustment, calculate_seam_factor
-from ..indicators.momentum import calculate_12_1_return
-from ..indicators.moving_averages import calculate_sma
 from ..indicators.piotroski import f_score_from_mapping
-from ..indicators.price_action import calculate_chandelier_exit_long
 from ..indicators.valuation import (
     book_to_market,
     cashflow_yield,
     earnings_yield,
     sales_yield,
 )
-from ..indicators.volatility import calculate_adr_ratio, calculate_atr
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..models.strategy import Candidate, DataIntegrityWarning, ScreenResult
 from .integrity.engine import evaluate_contract
@@ -1141,7 +1137,7 @@ def run_strategy(
 ) -> ScreenResult:
     strategy = registry.get(strategy_slug)
     if strategy is None:
-        from .. import strategies as _strategies
+        from .. import strategies as _strategies  # noqa: F401 - registers strategy modules
 
         strategy = registry.get(strategy_slug)
     if strategy is None:
@@ -1384,6 +1380,11 @@ def _screen_from_universe(
             )
 
     candidates: list[Candidate] = []
+    material_input_freshness = {
+        "prices": data_as_of[:10],
+        "fundamentals": data_as_of[:10],
+        "regime": (as_of_date or data_as_of[:10])[:10],
+    }
     for rank, row in enumerate(results.itertuples(index=False), start=1):
         shariah_status = (
             shariah_statuses.get(str(row.ticker).upper()) if shariah_only else None
@@ -1488,6 +1489,7 @@ def _screen_from_universe(
                 corporate_action_in_window=bool(getattr(row, "corporate_action_in_window", False)),
                 adj_close_basis_used=bool(getattr(row, "adj_close_basis_used", True)),
                 share_class_consistent=bool(getattr(row, "share_class_consistent", True)),
+                material_input_freshness=material_input_freshness,
             )
         )
 
@@ -1507,6 +1509,7 @@ def _screen_from_universe(
         disclaimer=DISCLAIMER_TEXT,
         stale_sources=stale_sources,
         data_notes=data_notes,
+        material_input_freshness=material_input_freshness,
         regime=regime_info["regime"] if regime_info else None,
         regime_allows_new_entries=(
             regime_info["allows_new_entries"] if regime_info else None

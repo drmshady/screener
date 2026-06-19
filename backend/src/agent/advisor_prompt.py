@@ -70,6 +70,75 @@ def _fmt_num(x, *, pct: bool = False) -> str | None:
     return f"{x:.4g}"
 
 
+def _date_part(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:10] if len(text) >= 10 else text
+
+
+def _material_input_freshness(
+    obj,
+    *,
+    default_as_of: str | None,
+    regime_as_of: str | None = None,
+) -> dict[str, str]:
+    return _material_input_freshness_from_raw(
+        getattr(obj, "material_input_freshness", None) or {},
+        default_as_of=default_as_of,
+        regime_as_of=regime_as_of,
+    )
+
+
+def _material_input_freshness_from_raw(
+    raw,
+    *,
+    default_as_of: str | None,
+    regime_as_of: str | None = None,
+) -> dict[str, str]:
+    fallback = _date_part(default_as_of) or "unavailable"
+    return {
+        "prices": _date_part(raw.get("prices")) or fallback,
+        "fundamentals": _date_part(raw.get("fundamentals")) or fallback,
+        "regime": _date_part(raw.get("regime")) or _date_part(regime_as_of) or fallback,
+    }
+
+
+def _material_input_freshness_lines(
+    obj,
+    *,
+    default_as_of: str | None,
+    regime_as_of: str | None = None,
+) -> list[str]:
+    freshness = _material_input_freshness(
+        obj, default_as_of=default_as_of, regime_as_of=regime_as_of
+    )
+    return [
+        f"- Prices data_as_of: {freshness['prices']}",
+        f"- Fundamentals data_as_of: {freshness['fundamentals']}",
+        f"- Regime as-of: {freshness['regime']}",
+    ]
+
+
+def _material_input_freshness_summary(
+    obj,
+    *,
+    default_as_of: str | None,
+    regime_as_of: str | None = None,
+) -> str:
+    freshness = _material_input_freshness(
+        obj, default_as_of=default_as_of, regime_as_of=regime_as_of
+    )
+    return (
+        "Material input freshness: "
+        f"prices {freshness['prices']}; "
+        f"fundamentals {freshness['fundamentals']}; "
+        f"regime {freshness['regime']}."
+    )
+
+
 def _diagnostics_lines(c) -> list[str]:
     """Ranking inputs + raw fundamentals so the advisor can rank/triage, not just
     read risk geometry. Only present values are shown; missing ones are omitted
@@ -188,12 +257,15 @@ def _strategy_context(strategy: Strategy, gate_names: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _candidate_block(result: AnalyzeResponse) -> str:
+def _candidate_block(result: AnalyzeResponse, *, regime_as_of: str | None = None) -> str:
     rr = _reward_risk(result.entry, result.stop_loss, result.take_profit)
     lines = [
         "## Candidate result",
         f"- Ticker: {result.ticker} — {result.name} ({result.sector})",
         f"- Data as of: {result.as_of}",
+        *_material_input_freshness_lines(
+            result, default_as_of=result.as_of, regime_as_of=regime_as_of
+        ),
         f"- Would be selected by the strategy: {'yes' if result.would_be_selected else 'no'}",
         f"- Current price: {result.current_price}",
         f"- Entry: {result.entry}",
@@ -244,7 +316,13 @@ def _regime_block(strategy: Strategy, regime: str | None) -> str:
     )
 
 
-def _honesty_block(result: AnalyzeResponse, survivorship: dict, directive: bool) -> str:
+def _honesty_block(
+    result: AnalyzeResponse,
+    survivorship: dict,
+    directive: bool,
+    *,
+    regime_as_of: str | None = None,
+) -> str:
     lines = ["## Honesty & limitations (read before any performance judgment)"]
 
     if not survivorship.get("confirmed"):
@@ -274,6 +352,12 @@ def _honesty_block(result: AnalyzeResponse, survivorship: dict, directive: bool)
     if result.data_notes:
         lines.append("- Data notes: " + " ".join(result.data_notes))
 
+    lines.append(
+        "- "
+        + _material_input_freshness_summary(
+            result, default_as_of=result.as_of, regime_as_of=regime_as_of
+        )
+    )
     lines.append(f"- Data freshness: end-of-day, as of {result.as_of}.")
     lines.append(f"- {result.disclaimer}")
     if directive:
@@ -303,10 +387,10 @@ def build_advisor_prompt(
     sections = [
         _task_instruction(directive),
         _strategy_context(strategy, gate_names),
-        _candidate_block(result),
+        _candidate_block(result, regime_as_of=result.as_of),
         _gate_breakdown(result),
         _regime_block(strategy, regime),
-        _honesty_block(result, survivorship, directive),
+        _honesty_block(result, survivorship, directive, regime_as_of=result.as_of),
     ]
     return "\n\n".join(sections) + "\n"
 
@@ -336,7 +420,13 @@ def _batch_task_instruction(directive: bool, n: int) -> str:
     )
 
 
-def _candidate_summary_block(c, *, sector_gate_on: bool = False) -> str:
+def _candidate_summary_block(
+    c,
+    *,
+    sector_gate_on: bool = False,
+    material_freshness=None,
+    default_as_of: str | None = None,
+) -> str:
     """Compact per-candidate block for the batch prompt (operates on a Candidate)."""
     rr = _reward_risk(c.entry, c.stop_loss, c.take_profit)
     rank = getattr(c, "rank", None)
@@ -348,6 +438,20 @@ def _candidate_summary_block(c, *, sector_gate_on: bool = False) -> str:
         + (f" | R:R {rr}" if rr else "")
     )
     lines = [head, levels]
+    source = material_freshness or getattr(c, "material_input_freshness", None) or {}
+    if source or default_as_of:
+        freshness = _material_input_freshness_from_raw(
+            source, default_as_of=default_as_of, regime_as_of=default_as_of
+        )
+        lines.append(
+            "- "
+            + (
+                "Material input freshness: "
+                f"prices {freshness['prices']}; "
+                f"fundamentals {freshness['fundamentals']}; "
+                f"regime {freshness['regime']}."
+            )
+        )
     if getattr(c, "data_integrity_warnings", []):
         for w in c.data_integrity_warnings:
             lines.append(f"### DATA INTEGRITY WARNING: {w.reason}")
@@ -432,6 +536,12 @@ def _batch_honesty_block(screen, survivorship: dict, directive: bool) -> str:
         lines.append("- Data notes: " + " ".join(screen.data_notes))
     if getattr(screen, "stale_sources", None):
         lines.append("- Stale sources: " + ", ".join(screen.stale_sources))
+    lines.append(
+        "- "
+        + _material_input_freshness_summary(
+            screen, default_as_of=screen.as_of_date, regime_as_of=screen.as_of_date
+        )
+    )
     lines.append(f"- Data freshness: end-of-day, as of {screen.as_of_date}.")
     lines.append(f"- {screen.disclaimer}")
     if directive:
@@ -460,7 +570,13 @@ def build_screen_advisor_prompt(
     sector_gate_on, _ = _sector_gate_state(screen)
     body = (
         "\n\n".join(
-            _candidate_summary_block(c, sector_gate_on=sector_gate_on) for c in candidates
+            _candidate_summary_block(
+                c,
+                sector_gate_on=sector_gate_on,
+                material_freshness=getattr(screen, "material_input_freshness", None),
+                default_as_of=screen.as_of_date,
+            )
+            for c in candidates
         )
         if candidates
         else "_No candidates matched the screen._"
@@ -469,6 +585,12 @@ def build_screen_advisor_prompt(
         _batch_task_instruction(directive, len(candidates)),
         _strategy_context(strategy, gate_names),
         _run_config_block(screen),
+        "## Material input freshness\n"
+        + "\n".join(
+            _material_input_freshness_lines(
+                screen, default_as_of=screen.as_of_date, regime_as_of=screen.as_of_date
+            )
+        ),
         _regime_block(strategy, getattr(screen, "regime", None)),
         f"## Candidates ({len(candidates)})\n{body}",
         _batch_honesty_block(screen, survivorship, directive),
@@ -560,6 +682,13 @@ def _matrix_candidates_block(variant) -> str:
     body = (
         "\n\n".join(
             _candidate_summary_block(c, sector_gate_on=sector_gate_on)
+            if not getattr(variant.screen, "material_input_freshness", None)
+            else _candidate_summary_block(
+                c,
+                sector_gate_on=sector_gate_on,
+                material_freshness=variant.screen.material_input_freshness,
+                default_as_of=variant.screen.as_of_date,
+            )
             for c in candidates
         )
         if candidates
@@ -628,6 +757,12 @@ def _matrix_honesty_block(variants, directive: bool) -> str:
                 notes.append(n)
     if notes:
         lines.append("- Data notes: " + " ".join(notes))
+    lines.append(
+        "- "
+        + _material_input_freshness_summary(
+            screen0, default_as_of=screen0.as_of_date, regime_as_of=screen0.as_of_date
+        )
+    )
     lines.append(f"- Data freshness: end-of-day, as of {screen0.as_of_date}.")
     lines.append(f"- {screen0.disclaimer}")
     if directive:

@@ -37,6 +37,9 @@ _EXPECTED_FAMILY = {
     "seam_discontinuity": "series",
     "seam_unverified": "series",
     "share_class_swap": "identity",
+    # A price pinned under a pending all-cash acquisition: realized vol collapses,
+    # saturating the vol_scalar and inflating the score (the EA defect).
+    "pinned_price": "value_domain",
     # A bad-bar jump co-occurring with a routine corporate action elsewhere in the
     # window: the localized jump check must still fire (no window-wide masking).
     "unexplained_jump_with_dividend": "series",

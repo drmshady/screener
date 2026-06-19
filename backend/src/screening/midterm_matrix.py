@@ -17,11 +17,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import pandas as pd
 
 from .. import strategies as _strategies  # noqa: F401 - registers strategies
 from ..agent.advisor_prompt import load_survivorship_status
-from ..models.strategy import ScreenResult, Strategy, VariantResult
+from ..models.strategy import VariantResult
 from ..strategies._registry import registry
 from .engine import (
     _build_screen_universe,

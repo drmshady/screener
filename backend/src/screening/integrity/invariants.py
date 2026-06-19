@@ -21,6 +21,8 @@ from __future__ import annotations
 import math
 from typing import Any, Callable, Iterable, List, Optional
 
+import pandas as pd
+
 from backend.src.screening.integrity.contract import Invariant
 
 # Pure formula over (row, signals) -> expected numeric value.
@@ -396,6 +398,74 @@ def value_domain_high_plausible(
         or (
             "the 52-week high is not consistent with the current close (below it, "
             f"or implausibly far above it); {_VERIFY}"
+        ),
+    )
+
+
+def value_domain_realized_vol_floor(
+    *,
+    min_annualized_vol: float = 0.08,
+    vol_scalar_cap: float = 2.0,
+    returns_column: str = "daily_returns",
+    trading_days: float = 252.0,
+    name: str = "value_domain.realized_vol_floor",
+    figure: str = "vol_scalar",
+    message: Optional[str] = None,
+) -> Invariant:
+    """Flag a candidate whose trailing realized volatility has collapsed below a
+    floor no freely-trading equity sustains — the signature of a price *pinned*
+    under a pending all-cash acquisition / cash tender (e.g. EA pinned at its $210
+    offer, realized vol ~6%). A collapsed realized vol SATURATES the
+    Barroso-Santa-Clara ``vol_scalar`` at its cap, which then inflates the momentum
+    score, so a merger-arb pin ranks as if it were clean low-vol momentum.
+
+    Deterministic and no-network (Decision 7): realized vol is read from the row's
+    precomputed ``daily_returns`` window — the exact series the scaler used, so the
+    annualized std reproduces ``calculate_volatility_scalar``'s denominator. When
+    that window is absent (fixtures / direct-figure tests), a ``vol_scalar``
+    saturated at its cap is itself the pin signal (cap ⟺ realized_vol at/under the
+    floor). A missing window with an unsaturated scalar is not this invariant's
+    concern (fail-open, SC-002)."""
+
+    def _annualized_vol(row) -> Optional[float]:
+        raw = _get(row, returns_column)
+        if raw is None:
+            return None
+        try:
+            series = pd.Series(raw, dtype="float64").dropna()
+        except (TypeError, ValueError):
+            return None
+        if len(series) < 2:
+            return None
+        sd = series.std()
+        if sd is None or not math.isfinite(float(sd)):
+            return None
+        return float(sd) * math.sqrt(trading_days)
+
+    def predicate(row, signals) -> bool:
+        rv = _annualized_vol(row)
+        if rv is not None:
+            return rv >= min_annualized_vol
+        # No usable returns window: a vol_scalar saturated at its cap implies a
+        # realized vol already at/under the floor (cap == target/floor), so treat
+        # saturation as the pin signal; an unsaturated scalar is satisfied.
+        vs = _finite(_get(row, "vol_scalar"))
+        if vs is None:
+            return True
+        return vs < vol_scalar_cap - 1e-6
+
+    return Invariant(
+        name=name,
+        family="value_domain",
+        severity="candidate",
+        predicate=predicate,
+        figure=figure,
+        message=message
+        or (
+            "trailing realized volatility has collapsed below "
+            f"{min_annualized_vol:.0%} annualized — the signature of a price pinned "
+            "under a pending all-cash acquisition or cash tender, which saturates "
+            f"the volatility scalar and inflates the momentum score; {_VERIFY}"
         ),
     )
 

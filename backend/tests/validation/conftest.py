@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import pytest
@@ -206,58 +205,3 @@ def first_rejecting_gate(row: pd.Series, snapshot: FrozenSnapshot) -> str | None
         if not ok:
             return gate
     return None
-
-
-@pytest.fixture(scope="session")
-def reference_tickers(frozen_snapshot: FrozenSnapshot) -> dict[str, dict[str, Any]]:
-    df = frozen_snapshot.us_prepared
-    hard_candidates = set(midterm.rules(frozen_snapshot.us)["ticker"].astype(str))
-
-    refs: dict[str, dict[str, Any]] = {}
-    for ticker in ["EA", "BELFB", "ASYS", "AMAT", "ROST"]:
-        if ticker in set(df["ticker"].astype(str)):
-            refs[ticker] = {
-                "expected": "pass",
-                "actual": "pass" if ticker in hard_candidates else "fail",
-                "expected_gate": None,
-                "actual_gate": None
-                if ticker in hard_candidates
-                else first_rejecting_gate(df[df["ticker"] == ticker].iloc[0], frozen_snapshot),
-            }
-
-    if not df[df["ticker"] == "WYY"].empty:
-        row = df[df["ticker"] == "WYY"].iloc[0]
-        # WYY fails BOTH quality (D/E ~5.9 > 1.5 ceiling) and low-asset-growth.
-        # Quality precedes asset_growth in the declared gate order, so the
-        # first-rejecting gate is quality. (The earlier oracle expected
-        # asset_growth, overlooking WYY's leverage — corrected per F-001.)
-        refs["WYY"] = {
-            "expected": "fail",
-            "actual": "pass" if "WYY" in hard_candidates else "fail",
-            "expected_gate": "quality",
-            "actual_gate": first_rejecting_gate(row, frozen_snapshot),
-        }
-
-    proximity = df[df["dist_to_high"] > midterm.PARAMETERS["proximity_pct"].default].iloc[0]
-    refs[str(proximity["ticker"])] = {
-        "expected": "fail",
-        "actual": "pass" if str(proximity["ticker"]) in hard_candidates else "fail",
-        "expected_gate": "proximity",
-        "actual_gate": first_rejecting_gate(proximity, frozen_snapshot),
-    }
-
-    quality = df[
-        (df["dist_to_high"] <= midterm.PARAMETERS["proximity_pct"].default)
-        & (
-            (df["debt_to_equity"] > midterm.PARAMETERS["max_debt_equity"].default)
-            | (df["fcf_ttm"] <= 0)
-        )
-    ].iloc[0]
-    refs[str(quality["ticker"])] = {
-        "expected": "fail",
-        "actual": "pass" if str(quality["ticker"]) in hard_candidates else "fail",
-        "expected_gate": "quality",
-        "actual_gate": first_rejecting_gate(quality, frozen_snapshot),
-    }
-
-    return refs

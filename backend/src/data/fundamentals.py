@@ -139,7 +139,6 @@ class FundamentalsLoader:
 
     def fetch_fundamentals(self, ticker: str, start_date: date | None = None) -> list[FundamentalsSnapshot]:
         payload = self.fetch_company_facts(ticker)
-        cik = str(payload.get("cik", "")).zfill(10)
         now = datetime.now(timezone.utc)
         snapshots: list[FundamentalsSnapshot] = []
         for form_type in (FormType.FORM_10_K, FormType.FORM_10_Q):

@@ -1,0 +1,56 @@
+# Git and local metadata
+.git/
+.gitignore
+.specify/
+.agents/
+.codex/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Node and frontend build output
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+
+# Local-only data and logs
+*.log
+.env
+.env.*
+!.env.example
+backend/data/cache/
+backend/data/raw/
+backend/data/portfolio_state.json
+backend/backend/
+
+# Secrets / keys must never enter the image (FR-010, SC-008)
+*.pem
+*.key
+*.p12
+*.pfx
+*_secret*
+*secret*.json
+*.credentials
+id_rsa*
+
+# Tests and local config are not needed at runtime
+backend/tests/
+backend/htmlcov/
+backend/.coverage
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

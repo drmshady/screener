@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { isolatePortfolioState } from './_state';
 
 function portfolioState() {
   const timestamp = '2026-06-11T00:00:00Z';
@@ -60,6 +61,10 @@ test('candidate page mounts price chart with level labels', async ({ page }) => 
 });
 
 test('home and portfolio mount regime and allocation visuals', async ({ page }) => {
+  // Isolate from the shared backend portfolio blob so PortfolioSync keeps the
+  // seeded localStorage holdings instead of clobbering them with state a
+  // parallel test persisted to portfolio_state.json.
+  await isolatePortfolioState(page);
   await page.goto('/');
   await expect(page.getByTestId('regime-spy-chart')).toBeVisible({ timeout: 45_000 });
   await expect(page.getByTestId('regime-breadth-gauge')).toBeVisible();

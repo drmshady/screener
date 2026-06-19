@@ -1,30 +1,30 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { MetaResponse, MetaResponseSchema, fetchApi } from '@/lib/api';
+import { DataFreshnessResponse, getDataFreshness } from '@/lib/api';
 
-function primaryAsOf(meta: MetaResponse | null) {
+function primaryAsOf(freshness: DataFreshnessResponse | null) {
   const priceSource =
-    meta?.sources.find((source) => source.kind === 'prices' && source.source_name === 'yfinance') ??
-    meta?.sources.find((source) => source.kind === 'prices') ??
-    meta?.sources[0];
-  return priceSource?.last_bar_date ?? priceSource?.source_as_of.slice(0, 10) ?? null;
+    freshness?.sources.find((source) => source.kind === 'prices' && source.source_name === 'yfinance') ??
+    freshness?.sources.find((source) => source.kind === 'prices') ??
+    freshness?.sources[0];
+  return priceSource?.data_as_of ?? freshness?.latest_session ?? null;
 }
 
 export function GlobalDataAsOf() {
-  const [meta, setMeta] = useState<MetaResponse | null>(null);
+  const [freshness, setFreshness] = useState<DataFreshnessResponse | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    fetchApi('/meta', MetaResponseSchema)
+    getDataFreshness()
       .then((payload) => {
-        setMeta(payload);
+        setFreshness(payload);
         setFailed(false);
       })
       .catch(() => setFailed(true));
   }, []);
 
-  const asOf = useMemo(() => primaryAsOf(meta), [meta]);
+  const asOf = useMemo(() => primaryAsOf(freshness), [freshness]);
 
   if (failed) {
     return <span className="text-xs font-medium text-amber-800">Data freshness unavailable</span>;

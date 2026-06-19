@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: screener-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: SCREENER_HOSTED_MODE
+        value: "1"
+      - key: SCREENER_OWNER_SECRET
+        sync: false
+      - key: SCREENER_FRONTEND_ORIGIN
+        sync: false

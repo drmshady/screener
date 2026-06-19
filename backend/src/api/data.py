@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..lib import hosting
+from ..data.freshness import compute_data_freshness
 from ..data.prices import fetch_incremental_ohlcv
 from ..data.prices_store import load_last_dates, save_prices
 from ..data.saudi_universe import saudi_universe
@@ -63,6 +65,12 @@ def _update_prices_manifest(tickers: list[str]) -> str | None:
 # Bound a manual refresh so an interactive click can't kick off a multi-minute,
 # thousands-of-names yfinance pull (that's the scheduled ingest's job).
 _MAX_REFRESH_TICKERS = 1200
+_DEFAULT_REQUIRED_FRESHNESS_SOURCES = (
+    "yfinance",
+    "stooq",
+    "sec_edgar_company_tickers",
+    "ticker_profile_cache",
+)
 
 
 class DataRefreshRequest(BaseModel):
@@ -75,8 +83,25 @@ class DataRefreshResponse(BaseModel):
     fetched_rows: int
     latest_bar: str | None
     capped: bool
+    notices: list[str] = Field(default_factory=list)
     data_as_of: str
     disclaimer: str
+
+
+class DataFreshnessRecordResponse(BaseModel):
+    source_name: str
+    kind: str
+    data_as_of: str | None
+    latest_session: str
+    sessions_behind: int | None
+    is_stale: bool
+    last_refresh_outcome: str
+
+
+class DataFreshnessResponse(BaseModel):
+    sources: list[DataFreshnessRecordResponse]
+    any_stale: bool
+    latest_session: str
 
 
 def _resolve_tickers(req: DataRefreshRequest) -> list[str]:
@@ -97,36 +122,84 @@ def _resolve_tickers(req: DataRefreshRequest) -> list[str]:
     return sorted(set(names))
 
 
+@router.get("/freshness", response_model=DataFreshnessResponse)
+def get_data_freshness() -> DataFreshnessResponse:
+    snapshot = compute_data_freshness(
+        manifest_path=MANIFEST_PATH,
+        required_sources=_DEFAULT_REQUIRED_FRESHNESS_SOURCES,
+    )
+    return DataFreshnessResponse(
+        sources=[
+            DataFreshnessRecordResponse(
+                source_name=record.source_name,
+                kind=record.kind,
+                data_as_of=record.data_as_of.isoformat()
+                if record.data_as_of is not None
+                else None,
+                latest_session=record.latest_session.isoformat(),
+                sessions_behind=record.sessions_behind,
+                is_stale=record.is_stale,
+                last_refresh_outcome=record.last_refresh_outcome,
+            )
+            for record in snapshot.sources
+        ],
+        any_stale=snapshot.any_stale,
+        latest_session=snapshot.latest_session.isoformat(),
+    )
+
+
 @router.post("/refresh", response_model=DataRefreshResponse)
 def refresh_data(req: DataRefreshRequest) -> DataRefreshResponse:
     """Manually pull the latest bars for the market's screened universe (or an
     explicit list), persist them, update the manifest so /meta shows the new date,
     and clear snapshot caches so the next screen reflects the fresh data."""
+    if hosting.hosted_mode():
+        # The hosted instance serves a read-only baked snapshot and performs no
+        # in-host ingest. Refresh is a local-then-republish operation.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Data refresh runs locally in hosted mode. Refresh on your "
+                "machine and republish the backend image; this instance serves "
+                "a read-only snapshot."
+            ),
+        )
     names = _resolve_tickers(req)
     capped = len(names) > _MAX_REFRESH_TICKERS
     names = names[:_MAX_REFRESH_TICKERS]
 
-    fetched = fetch_incremental_ohlcv(names, history_days=650)
-    if not fetched.empty:
-        save_prices(fetched)
-    manifest_latest = _update_prices_manifest(names)
-    clear_snapshot_caches()
-
-    # Recompute the fixed reference-universe thresholds for the cross-sectional
-    # gates so a name's GP/asset-growth verdict stays stable across the screen and
-    # single-ticker analysis on the fresh data. Best-effort: never fail the refresh.
+    notices: list[str] = []
+    manifest_latest: str | None = None
     try:
-        refresh_reference_thresholds()
-    except Exception:
-        pass
+        fetched = fetch_incremental_ohlcv(names, history_days=650)
+    except Exception as exc:
+        fetched = None
+        notices.append(
+            "Refresh source was unreachable; cached data remains in use. "
+            f"Provider detail: {exc}"
+        )
+    else:
+        if not fetched.empty:
+            save_prices(fetched)
+        manifest_latest = _update_prices_manifest(names)
+        clear_snapshot_caches()
+
+        # Recompute the fixed reference-universe thresholds for the cross-sectional
+        # gates so a name's GP/asset-growth verdict stays stable across the screen and
+        # single-ticker analysis on the fresh data. Best-effort: never fail the refresh.
+        try:
+            refresh_reference_thresholds()
+        except Exception:
+            pass
 
     last_dates = load_last_dates(names)
     latest_bar = max((d.isoformat() for d in last_dates.values()), default=manifest_latest)
     return DataRefreshResponse(
         refreshed_tickers=len(names),
-        fetched_rows=int(len(fetched)),
+        fetched_rows=int(len(fetched)) if fetched is not None else 0,
         latest_bar=latest_bar,
         capped=capped,
+        notices=notices,
         data_as_of=utc_now_iso(),
         disclaimer=DISCLAIMER_TEXT,
     )

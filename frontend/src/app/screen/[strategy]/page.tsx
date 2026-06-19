@@ -17,6 +17,7 @@ import {
   ScreenResultSchema,
   Strategy,
   StrategySchema,
+  ApiError,
   fetchApi,
   refreshData,
 } from '@/lib/api';
@@ -34,6 +35,8 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
   // page shows the prior results instead of forcing a fresh (slow) screen.
   const [screenResult, setScreenResult] = useState<ScreenResult | null>(cached?.result ?? null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const [market, setMarket] = useState<'US' | 'SA'>(cached?.market ?? 'US');
@@ -55,8 +58,26 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
   const VALUE_MOMENTUM_FLOOR = -0.2;
 
   useEffect(() => {
-    fetchApi(`/strategies/${strategySlug}`, StrategySchema).then(setStrategy);
-    fetchApi(`/strategies/${strategySlug}/backtest`, BacktestResponseSchema).then(setBacktest);
+    fetchApi(`/strategies/${strategySlug}`, StrategySchema)
+      .then((payload) => {
+        setStrategy(payload);
+        setLoadError(null);
+      })
+      .catch((error) =>
+        setLoadError(error instanceof Error ? error.message : 'Strategy metadata unavailable.'),
+      );
+    fetchApi(`/strategies/${strategySlug}/backtest`, BacktestResponseSchema)
+      .then((payload) => {
+        setBacktest(payload);
+        setLoadError(null);
+      })
+      .catch((error) =>
+        setLoadError(
+          error instanceof Error
+            ? `Backtest unavailable: ${error.message}`
+            : 'Backtest unavailable. Retry when the backend is available.',
+        ),
+      );
     fetchApi(`/strategies/${strategySlug}/backtest/equity-curve`, EquityCurveResponseSchema)
       .then(setEquityCurve)
       .catch(() => setEquityCurve(null));
@@ -100,6 +121,7 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
 
   async function handleRun() {
     setLoading(true);
+    setRunError(null);
     try {
       const result = await fetchApi(`/strategies/${strategySlug}/run`, ScreenResultSchema, {
         method: 'POST',
@@ -108,6 +130,13 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
       setScreenResult(result);
       // Cache so navigating into a candidate detail and back doesn't re-run.
       setCachedScreen(strategySlug, { result, market, ranAt: Date.now() });
+    } catch (error) {
+      const retry = error instanceof ApiError && error.retryable ? ' Retry when the backend is available.' : '';
+      setRunError(
+        error instanceof Error
+          ? `${error.message}${retry}`
+          : 'The screen could not be run. Retry when the backend is available.',
+      );
     } finally {
       setLoading(false);
     }
@@ -130,8 +159,17 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
     }
   }
 
-  if (!strategy || !backtest) {
+  if (!strategy && !loadError) {
     return <main className="mx-auto max-w-6xl px-6 py-8 text-sm text-slate-600">Loading strategy...</main>;
+  }
+
+  if (!strategy) {
+    return (
+      <main className="mx-auto max-w-6xl space-y-4 px-6 py-8 text-sm text-slate-600">
+        <h1 className="text-xl font-semibold text-slate-950">Strategy unavailable</h1>
+        <p>{loadError ?? 'Strategy metadata could not be loaded.'}</p>
+      </main>
+    );
   }
 
   const configuredEarningsWindow =
@@ -149,7 +187,9 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
             <span className="border border-slate-300 px-2 py-1 text-xs text-slate-700">{strategy.timeframe}</span>
           </div>
           <p className="max-w-3xl text-sm text-slate-600">{strategy.description}</p>
-          <AsOfBadge date={backtest.data_as_of} sourceName={backtest.data_sources[0]?.source_name} />
+          {backtest ? (
+            <AsOfBadge date={backtest.data_as_of} sourceName={backtest.data_sources[0]?.source_name} />
+          ) : null}
         </div>
         <div className="flex flex-col items-stretch gap-2 sm:items-end">
           <div className="inline-flex overflow-hidden border border-slate-300 text-sm">
@@ -277,12 +317,32 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
         </section>
       ) : null}
 
+      {loadError ? (
+        <section className="border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-medium">Backtest evidence is temporarily unavailable.</p>
+          <p className="mt-1">{loadError}</p>
+        </section>
+      ) : null}
+
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
         <StrategyGatesPanel strategy={strategy} />
-        <WalkForwardMetricsPanel backtest={backtest} />
+        {backtest ? (
+          <WalkForwardMetricsPanel backtest={backtest} />
+        ) : (
+          <section className="panel p-4 text-sm text-slate-600">
+            Backtest metrics are unavailable. The rest of the screen remains usable.
+          </section>
+        )}
       </div>
 
-      <EquityCurveCharts backtest={backtest} curve={equityCurve} />
+      {backtest ? <EquityCurveCharts backtest={backtest} curve={equityCurve} /> : null}
+
+      {runError ? (
+        <section className="border border-red-200 bg-red-50 p-4 text-sm text-red-900" role="alert">
+          <p className="font-medium">Screen run failed.</p>
+          <p className="mt-1">{runError}</p>
+        </section>
+      ) : null}
 
       {screenResult?.regime ? (
         <section
@@ -331,38 +391,45 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
               </ul>
             </div>
           ) : null}
-          <div className="overflow-x-auto border border-slate-200 bg-white">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th className="px-4 py-3">Ticker</th>
-                  <th className="px-4 py-3">Sector</th>
-                  <th className="px-4 py-3">Shariah</th>
-                  <th className="px-4 py-3 text-right">Current</th>
-                  <th className="px-4 py-3 text-right">Entry</th>
-                  <th className="px-4 py-3 text-right">Stop / Distance</th>
-                  <th className="px-4 py-3 text-right">Target</th>
-                  <th className="px-4 py-3">Reason</th>
-                  <th className="px-4 py-3">Events</th>
-                  <th className="px-4 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {screenResult.candidates.map((candidate) => (
-                  <CandidateRow
-                    candidate={candidate}
-                    key={candidate.ticker}
-                    strategySlug={strategySlug}
-                    timeframe={strategy.timeframe}
-                    sectorTopFraction={sectorGateOn ? 0.5 : 1.0}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
           {screenResult.candidates.length === 0 ? (
-            <div className="border border-slate-200 bg-white p-4 text-sm text-slate-600">No candidates matched the active filters.</div>
-          ) : null}
+            <div className="border border-slate-200 bg-white p-4 text-sm text-slate-600">
+              <p className="font-medium text-slate-950">No candidates matched the active filters.</p>
+              <p className="mt-1">
+                Review the data completeness notes, adjust filters, or refresh stale sources before interpreting the
+                screen.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto border border-slate-200 bg-white">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th className="px-4 py-3">Ticker</th>
+                    <th className="px-4 py-3">Sector</th>
+                    <th className="px-4 py-3">Shariah</th>
+                    <th className="px-4 py-3 text-right">Current</th>
+                    <th className="px-4 py-3 text-right">Entry</th>
+                    <th className="px-4 py-3 text-right">Stop / Distance</th>
+                    <th className="px-4 py-3 text-right">Target</th>
+                    <th className="px-4 py-3">Reason</th>
+                    <th className="px-4 py-3">Events</th>
+                    <th className="px-4 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {screenResult.candidates.map((candidate) => (
+                    <CandidateRow
+                      candidate={candidate}
+                      key={candidate.ticker}
+                      strategySlug={strategySlug}
+                      timeframe={strategy.timeframe}
+                      sectorTopFraction={sectorGateOn ? 0.5 : 1.0}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       ) : null}
     </main>

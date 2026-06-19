@@ -148,6 +148,7 @@ class Candidate(BaseModel):
     corporate_action_in_window: Optional[bool] = None
     adj_close_basis_used: Optional[bool] = None
     share_class_consistent: Optional[bool] = None
+    material_input_freshness: Dict[str, Optional[str]] = Field(default_factory=dict)
 
 
 class ScreenResult(BaseModel):
@@ -163,6 +164,7 @@ class ScreenResult(BaseModel):
     disclaimer: str
     stale_sources: List[str] = Field(default_factory=list)
     data_notes: List[str] = Field(default_factory=list)
+    material_input_freshness: Dict[str, Optional[str]] = Field(default_factory=dict)
     regime: Optional[str] = None
     regime_allows_new_entries: Optional[bool] = None
     regime_note: Optional[str] = None
@@ -200,6 +202,7 @@ class AnalyzeResponse(BaseModel):
     # Feature 008: integrity warnings (data-model §5).
     data_integrity_warnings: List[DataIntegrityWarning] = Field(default_factory=list)
     data_suspect: bool = False
+    material_input_freshness: Dict[str, Optional[str]] = Field(default_factory=dict)
     data_as_of: str
     disclaimer: str
 

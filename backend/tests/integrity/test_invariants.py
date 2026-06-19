@@ -30,6 +30,7 @@ from backend.src.screening.integrity.invariants import (
     value_domain_finite,
     value_domain_high_plausible,
     value_domain_positive,
+    value_domain_realized_vol_floor,
     value_domain_return_plausible,
 )
 
@@ -181,6 +182,25 @@ def test_value_domain_bounded_is_reusable_symmetric_guard():
     assert inv.predicate(pd.Series({"book_to_market": 257.0}), pd.Series(dtype=object)) is False
     # missing value is not this invariant's concern (fail-open)
     assert inv.predicate(pd.Series({"book_to_market": None}), pd.Series(dtype=object)) is True
+
+
+def test_value_domain_realized_vol_floor_pass_and_fire():
+    inv = value_domain_realized_vol_floor(min_annualized_vol=0.08)
+    assert inv.family == "value_domain" and inv.severity == "candidate"
+    assert inv.figure == "vol_scalar"
+
+    # Normal-vol momentum name: ~30% annualized realized vol -> satisfied.
+    normal = pd.Series(np.random.default_rng(0).normal(0, 0.30 / np.sqrt(252), 126))
+    assert inv.predicate(_row(daily_returns=normal), _signals()) is True
+
+    # EA-like pin: ~6% annualized realized vol -> fires.
+    pinned = pd.Series(np.random.default_rng(1).normal(0, 0.06 / np.sqrt(252), 126))
+    assert inv.predicate(_row(daily_returns=pinned), _signals()) is False
+
+    # No returns window: a vol_scalar saturated at its cap is the pin signal.
+    assert inv.predicate(_row(vol_scalar=2.0), _signals()) is False
+    # No returns window + unsaturated scalar -> fail-open (no false positive).
+    assert inv.predicate(_row(vol_scalar=1.0), _signals()) is True
 
 
 # --- series integrity -----------------------------------------------------

@@ -13,11 +13,15 @@ This is an informational screening tool only. It does not place trades and it do
 
 ## Run Locally
 
+Production build for headless/personal-use deployment. `NEXT_PUBLIC_API_URL` is
+supplied **at runtime**, never baked into the build; provider keys are inline /
+process-local and are **never written to any file**. The full deployment runbook
+(prerequisites, data-directory locations, smoke verification, finalization) lives
+in `specs/009-release-readiness/quickstart.md`.
+
 ```powershell
+# Backend
 py -3.12 -m pip install -e ".\backend[dev]"
-cd frontend
-npm install
-cd ..
 
 py -3.12 scripts\seed_universe.py
 py -3.12 scripts\refresh_stooq_history.py
@@ -29,9 +33,12 @@ py -3.12 -m uvicorn backend.src.api.app:app --host 127.0.0.1 --port 8000
 In another shell:
 
 ```powershell
+# Frontend (Next production build)
 cd frontend
-$env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8000"
-npm run dev
+npm.cmd install
+npm.cmd run build
+$env:NEXT_PUBLIC_API_URL = "http://127.0.0.1:8000"   # runtime, NOT baked into the build
+npm.cmd run start
 ```
 
 Open `http://127.0.0.1:3000`.
