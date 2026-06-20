@@ -143,6 +143,12 @@ class Candidate(BaseModel):
     sales_yield: Optional[float] = None
     f_score: Optional[int] = None
     f_score_evaluable: Optional[int] = None
+    # Feature 011 (US3): fair-value estimate + trust flag (contracts/fair-value.md).
+    # Optional/None when unavailable — fails open, never blocks the candidate.
+    fair_value: Optional[float] = None
+    fair_value_basis: Optional[str] = None
+    fair_value_trust_flag: Optional[str] = None
+    fair_value_margin_of_safety: Optional[float] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     # Feature 008: candidate-severity contract violations (data-model §5).
@@ -229,6 +235,11 @@ class AnalyzeResponse(BaseModel):
     sales_yield: Optional[float] = None
     f_score: Optional[int] = None
     f_score_evaluable: Optional[int] = None
+    # Feature 011 (US3): fair-value estimate + trust flag (contracts/fair-value.md).
+    fair_value: Optional[float] = None
+    fair_value_basis: Optional[str] = None
+    fair_value_trust_flag: Optional[str] = None
+    fair_value_margin_of_safety: Optional[float] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     data_notes: List[str] = Field(default_factory=list)
     # Feature 008: integrity warnings (data-model §5).

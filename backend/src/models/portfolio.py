@@ -157,6 +157,10 @@ class PortfolioQuote(BaseModel):
     stop_loss: Decimal | None = None
     tighter_stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
+    # Feature 011 (US3): so the frontend can pass a trusted fair value into the
+    # /sizing request without a second lookup. Optional/backward-compatible.
+    fair_value: Decimal | None = None
+    fair_value_trust_flag: str | None = None
     is_stale: bool = False
     data_notes: list[str] = Field(default_factory=list)
     data_as_of: str

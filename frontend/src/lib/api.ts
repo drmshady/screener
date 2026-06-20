@@ -131,6 +131,13 @@ export const CandidateSchema = z.object({
   stop_loss: z.string(),
   tighter_stop_loss: z.string().nullable().optional(),
   take_profit: z.string(),
+  // Feature 011 (US2): bounded-levels metadata
+  risk_distance: z.number().nullable().optional(),
+  reward_distance: z.number().nullable().optional(),
+  reward_ceiling_basis: z.string().nullable().optional(),
+  bounds_applied: z.array(z.string()).optional().default([]),
+  levels_state: z.string().nullable().optional(),
+  rationale: z.string().nullable().optional(),
   rank: z.number(),
   score: z.number(),
   reason: z.string(),
@@ -164,6 +171,10 @@ export const CandidateSchema = z.object({
   sales_yield: z.number().nullable().optional(),
   f_score: z.number().nullable().optional(),
   f_score_evaluable: z.number().nullable().optional(),
+  // Feature 011 (US3): fair-value estimate + trust flag
+  fair_value: z.number().nullable().optional(),
+  fair_value_basis: z.string().nullable().optional(),
+  fair_value_trust_flag: z.string().nullable().optional(),
   shariah_compliant: z.boolean().nullable().optional(),
   shariah_source_kind: z.string().nullable().optional(),
   shariah_external_source_name: z.string().nullable().optional(),
@@ -497,6 +508,13 @@ export const SizingResponseSchema = z.object({
   resulting_sector_pct_of_capital: z.number(),
   caps_respected: z.boolean(),
   reasoning: z.string(),
+  // Feature 011 (US3): risk-per-trade + conviction-modulation metadata
+  risk_per_trade_target: z.string().nullable().optional(),
+  risk_per_share: z.string().nullable().optional(),
+  conviction_signal: z.string().nullable().optional(),
+  conviction_adjustment: z.string().nullable().optional(),
+  binding_constraint: z.string().nullable().optional(),
+  conviction_used: z.boolean().optional().default(false),
   data_as_of: z.string(),
   disclaimer: z.string(),
 });

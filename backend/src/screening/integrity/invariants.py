@@ -216,6 +216,15 @@ def level_sanity(
         risk = entry - stop
         if risk <= 0:
             return True  # the ordering invariant owns this failure
+        risk_distance = _finite(_get(row, "risk_distance"))
+        reward_distance = _finite(_get(row, "reward_distance"))
+        reward_ceiling_basis = _get(row, "reward_ceiling_basis")
+        if reward_ceiling_basis is not None or reward_distance is not None:
+            if risk_distance is not None and abs(risk_distance - risk) > tol:
+                return False
+            if reward_distance is None:
+                return False
+            return abs((tp - entry) - reward_distance) <= tol
         return abs((tp - entry) / risk - r_multiple) <= tol
 
     ordering = Invariant(
@@ -238,8 +247,8 @@ def level_sanity(
         figure="take_profit",
         message=message_r
         or (
-            "take-profit is not the declared reward:risk multiple of the "
-            f"entry-to-stop risk; {_VERIFY}"
+            "take-profit does not match the declared reward:risk multiple or "
+            f"bounded reward-distance metadata; {_VERIFY}"
         ),
     )
     return [ordering, r_mult]

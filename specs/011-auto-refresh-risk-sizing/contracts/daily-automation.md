@@ -16,6 +16,15 @@ running unattended in cloud CI. No app-runtime API change.
 
 Ordered, **abort-before-publish** on any failure:
 
+0. **Restore prior snapshot state** — the CI runner checks out the repo clean
+   each run (`backend/data/` is gitignored, never committed), so before
+   `ingest_daily` can run incrementally it needs the previously-published data
+   tree (parquet bars, `catalog.db`, EDGAR slim cache, manifest) restored
+   locally from the currently-live `:latest` image (`docker create` + `docker
+   cp`). **Fails open**: if there is no prior image (true first run) or
+   extraction fails, proceed anyway — `ingest_daily` then does a full-history
+   fetch instead of a delta. This step never aborts the chain; it only affects
+   efficiency, not correctness (T013a/T013b).
 1. **Incremental refresh only** — `ingest_daily` (prices + events + Shariah +
    fundamentals on current cadence). The heavy Stooq deep-history bundle is **not**
    on this daily path (separate infrequent job). Append-only delta; reuse EDGAR

@@ -364,6 +364,68 @@ def _forward_return(
     return (exit_price / entry) - 1
 
 
+def _modeled_exit_return(
+    by_ticker: pd.core.groupby.DataFrameGroupBy,
+    ticker: str,
+    as_of: date,
+    *,
+    stop_loss: float | None,
+    take_profit: float | None,
+    horizon_days: int = HOLDING_HORIZON_DAYS,
+) -> float | None:
+    """Level-driven modeled exit, opt-in for feature 011 US4.
+
+    Entry is the next close after ``as_of``. Each subsequent bar checks a gap at
+    the open first, then the intrabar stop before the target (conservative when
+    both are touched), else exits at the fixed horizon as the current baseline
+    does. Inputs are already point-in-time levels from the candidate row.
+    """
+    if stop_loss is None or take_profit is None:
+        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+    try:
+        stop = float(stop_loss)
+        target = float(take_profit)
+    except (TypeError, ValueError):
+        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+    if stop <= 0 or target <= stop:
+        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+
+    group = by_ticker.get_group(ticker)
+    after = group[group["as_of_date"] > pd.Timestamp(as_of)].copy()
+    if after.empty:
+        return None
+    entry = float(after.iloc[0]["close"])
+    if entry <= 0:
+        return None
+
+    horizon_ts = pd.Timestamp(as_of) + timedelta(days=horizon_days)
+    horizon_rows = after[after["as_of_date"] <= horizon_ts]
+    if horizon_rows.empty:
+        horizon_rows = after.iloc[[0]]
+
+    exit_price: float | None = None
+    for _, bar in horizon_rows.iterrows():
+        open_price = float(bar.get("open", bar["close"]))
+        high = float(bar["high"])
+        low = float(bar["low"])
+        close = float(bar["close"])
+        if open_price <= stop:
+            exit_price = open_price
+            break
+        if open_price >= target:
+            exit_price = open_price
+            break
+        if low <= stop:
+            exit_price = stop
+            break
+        if high >= target:
+            exit_price = target
+            break
+        exit_price = close
+
+    return (float(exit_price) / entry) - 1 if exit_price is not None else None
+
+
 # --------------------------------------------------------------------------- #
 # Backtest driver
 # --------------------------------------------------------------------------- #
@@ -398,6 +460,7 @@ def run_backtest(
     end: date,
     tickers: list[str] | None = None,
     prices: pd.DataFrame | None = None,
+    modeled_exits: bool = False,
 ) -> dict:
     strategy = registry.get(strategy_slug)
     if strategy is None:
@@ -521,8 +584,19 @@ def run_backtest(
             candidates = candidates.sort_values(["score", "ticker"], ascending=[False, True]).head(TOP_N)
         returns = []
         horizon_days = int(strategy.holding_period_days.get("max", HOLDING_HORIZON_DAYS))
-        for ticker in candidates["ticker"].tolist():
-            value = _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+        for _, candidate in candidates.iterrows():
+            ticker = str(candidate["ticker"])
+            if modeled_exits:
+                value = _modeled_exit_return(
+                    by_ticker,
+                    ticker,
+                    as_of,
+                    stop_loss=candidate.get("stop_loss"),
+                    take_profit=candidate.get("take_profit"),
+                    horizon_days=horizon_days,
+                )
+            else:
+                value = _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
             if value is not None:
                 returns.append(value)
         all_returns.extend(returns)
@@ -563,6 +637,7 @@ def run_backtest(
         "yearly_metrics": yearly_metrics,
         "summary_metrics": summary,
         "code_version": "local",
+        "exit_model": "modeled_levels" if modeled_exits else "fixed_horizon",
         "computed_at": computed_at,
         # Annual rebalanced-portfolio equity curve (one step per year), compounding
         # the per-year equal-weight basket returns — not sequential per-trade.
@@ -597,6 +672,11 @@ def main() -> None:
     parser.add_argument("--start", default="2008-01-01")
     parser.add_argument("--end", default="2024-12-31")
     parser.add_argument("--tickers", help="Optional comma-separated ticker subset (default: full Stooq universe).")
+    parser.add_argument(
+        "--modeled-exits",
+        action="store_true",
+        help="Opt in to feature-011 level-driven exits; fixed-horizon remains default until gated re-baseline.",
+    )
     args = parser.parse_args()
 
     result = run_backtest(
@@ -604,6 +684,7 @@ def main() -> None:
         date.fromisoformat(args.start),
         date.fromisoformat(args.end),
         _tickers(args.tickers) if args.tickers else None,
+        modeled_exits=args.modeled_exits,
     )
     write_artifacts(result)
     print(f"Wrote backtest artifacts for {args.strategy}")

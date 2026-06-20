@@ -6,9 +6,10 @@
 # (research.md Decision 5).
 #
 # Ordered, abort-before-publish on any failed step:
-#   new-session guard -> incremental ingest_daily -> integrity harness (008) ->
-#   release secret scan -> docker build (only if a new session was published) ->
-#   push GHCR -> optional HF Factory-rebuild.
+#   new-session guard -> restore prior backend/data tree (best effort) ->
+#   incremental ingest_daily -> integrity harness (008) -> release secret scan ->
+#   docker build (only if a new session was published) -> push GHCR -> optional
+#   HF Factory-rebuild.
 #
 # The heavy ~90-day Stooq deep-history bundle is NEVER on this path by default
 # (-FullStooq opts in for the separate, infrequent job; research.md Decision 5).
@@ -48,6 +49,36 @@ function Run($exe, [string[]]$cmdArgs) {
     if ($LASTEXITCODE -ne 0) { Die "$exe exited $LASTEXITCODE" }
 }
 
+function Restore-PriorSnapshot([string]$ImageName) {
+    Step 'Restore prior snapshot state (best effort)'
+    $dataDir = Join-Path $RepoRoot 'backend\data'
+    if (-not (Test-Path -LiteralPath $dataDir)) {
+        New-Item -ItemType Directory -Path $dataDir | Out-Null
+    }
+
+    docker pull "$ImageName`:latest" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'No prior :latest image available; treating this as a first run and continuing.' -ForegroundColor Yellow
+        return
+    }
+
+    $containerId = (& docker create "$ImageName`:latest").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $containerId) {
+        Write-Host 'Could not create a throwaway container for restore; continuing with a full refresh.' -ForegroundColor Yellow
+        return
+    }
+    try {
+        docker cp "$containerId`:/app/backend/data/." $dataDir | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Restored prior backend/data tree from $ImageName`:latest." -ForegroundColor Green
+        } else {
+            Write-Host 'Prior snapshot restore failed; continuing with a full refresh.' -ForegroundColor Yellow
+        }
+    } finally {
+        docker rm $containerId | Out-Null
+    }
+}
+
 # --- 0. New-session / idempotency guard (FR-005) ---------------------------
 if ($SkipGuard) {
     Step 'New-session guard SKIPPED (-SkipGuard) -- publishing unconditionally'
@@ -78,6 +109,8 @@ if ($SkipGuard) {
 if ($SkipRefresh) {
     Step 'Data refresh SKIPPED (-SkipRefresh) -- baking whatever is on disk'
 } else {
+    Restore-PriorSnapshot $Image
+
     Step 'Refresh universe'
     Run 'py' @('-3.12', 'scripts\seed_universe.py')
 

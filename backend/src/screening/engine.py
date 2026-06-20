@@ -18,6 +18,7 @@ from ..data.profiles import load_or_fetch_profiles
 from ..data.universe import UniverseLoader
 from ..data.market_calendar import drop_market_weekends, market_of, trading_days_between
 from ..events.service import EventsService, TickerEventsSnapshot
+from ..indicators.fair_value import estimate_fair_value
 from ..indicators.seam_adjust import apply_seam_adjustment, calculate_seam_factor
 from ..indicators.piotroski import f_score_from_mapping
 from ..indicators.valuation import (
@@ -26,6 +27,7 @@ from ..indicators.valuation import (
     earnings_yield,
     sales_yield,
 )
+from ..lib import flags
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..models.strategy import Candidate, DataIntegrityWarning, ScreenResult
 from .integrity.engine import evaluate_contract
@@ -346,6 +348,33 @@ def _value_row_fields(profile: dict[str, Any], close_px: float) -> dict[str, Any
         # f_score is meaningful only when at least one signal was evaluable.
         "f_score": int(fs) if fs_eval > 0 else None,
         "f_score_evaluable": int(fs_eval),
+        # Feature 011 (US3): period end backing book_to_market/earnings_yield,
+        # anchors the fair-value staleness check (contracts/fair-value.md).
+        "value_metrics_period_end": vm.get("period_end"),
+    }
+
+
+def _fair_value_row_fields(
+    value_fields: dict[str, Any], close_px: float, as_of: date
+) -> dict[str, Any]:
+    """Per-row fair-value estimate (feature 011 US3) from the yields
+    `_value_row_fields` already computed, plus the row's close. Pure, no I/O;
+    fails open (trust_flag "unavailable") when the yield inputs are missing."""
+    estimate = estimate_fair_value(
+        close=close_px,
+        book_to_market=value_fields.get("book_to_market"),
+        earnings_yield=value_fields.get("earnings_yield"),
+        period_end=value_fields.get("value_metrics_period_end"),
+        as_of=as_of,
+        basis=flags.fair_value_basis(),
+    )
+    return {
+        "fair_value": estimate["fair_value"],
+        "fair_value_basis": estimate["basis"],
+        "fair_value_source_as_of": estimate["source_as_of"],
+        "fair_value_provenance": estimate["provenance"],
+        "fair_value_trust_flag": estimate["trust_flag"],
+        "fair_value_margin_of_safety": estimate["margin_of_safety"],
     }
 
 
@@ -530,6 +559,7 @@ def _compute_snapshot_rows(
         )
         profile = profiles.get(str(ticker), {})
         value_fields = _value_row_fields(profile, float(close.iloc[-1]))
+        fair_value_fields = _fair_value_row_fields(value_fields, float(close.iloc[-1]), latest_date)
         rows.append(
             {
                 "ticker": str(ticker),
@@ -537,6 +567,7 @@ def _compute_snapshot_rows(
                 "sector": profile.get("sector", "Unclassified"),
                 "close": float(close.iloc[-1]),
                 **value_fields,
+                **fair_value_fields,
                 "high": float(high.iloc[-1]),
                 "low": float(low.iloc[-1]),
                 "volume": int(volume.iloc[-1]),
@@ -1415,6 +1446,12 @@ def _screen_from_universe(
                     else None
                 ),
                 take_profit=f"{row.take_profit:.2f}",
+                risk_distance=_opt_float(getattr(row, "risk_distance", None)),
+                reward_distance=_opt_float(getattr(row, "reward_distance", None)),
+                reward_ceiling_basis=getattr(row, "reward_ceiling_basis", None),
+                bounds_applied=list(getattr(row, "bounds_applied", None) or []),
+                levels_state=getattr(row, "levels_state", None),
+                rationale=getattr(row, "rationale", None),
                 rank=rank,
                 score=round(float(row.score), 6),
                 reason=row.reason,
@@ -1431,6 +1468,12 @@ def _screen_from_universe(
                 earnings_yield=_opt_float(getattr(row, "earnings_yield", None)),
                 cashflow_yield=_opt_float(getattr(row, "cashflow_yield", None)),
                 sales_yield=_opt_float(getattr(row, "sales_yield", None)),
+                fair_value=_opt_float(getattr(row, "fair_value", None)),
+                fair_value_basis=getattr(row, "fair_value_basis", None),
+                fair_value_trust_flag=getattr(row, "fair_value_trust_flag", None),
+                fair_value_margin_of_safety=_opt_float(
+                    getattr(row, "fair_value_margin_of_safety", None)
+                ),
                 f_score=(
                     int(_fs)
                     if (_fs := getattr(row, "f_score", None)) is not None

@@ -23,6 +23,7 @@ def _row(ticker, sector, close, high, ret, fcf, de, atr, sma_200, gp):
         "debt_to_equity": de,
         "atr": atr,
         "sma_200": sma_200,
+        "contraction_low_20": close - (2 * atr),
         "gp_to_assets": gp,
     }
 
@@ -46,10 +47,10 @@ def test_midterm_strategy_filters_and_ranks_frozen_universe():
     assert result["ticker"].tolist() == ["AAA"]
     row = result.iloc[0]
     assert row["entry"] == 100.0
-    # Trend-following stop = per-stock 200-day SMA (Faber), not the legacy 3-ATR stop.
-    assert row["stop_loss"] == 80.0
-    # Reference take-profit = entry + 3R where R = entry - stop.
-    assert row["take_profit"] == 160.0
+    # The 200-day SMA trend stop is bounded to the configured ATR band.
+    assert row["stop_loss"] == 92.0
+    assert row["risk_distance"] == 8.0
+    assert row["take_profit"] == 124.0
     assert "52-week high" in row["reason"]
 
 
@@ -81,7 +82,7 @@ def test_gross_profitability_gate_drops_bottom_half_of_universe():
     assert result["ticker"].tolist() == ["HIGHGP"]
 
 
-def test_stop_falls_back_to_atr_when_no_sma_column():
+def test_missing_sma_column_yields_no_levelled_candidate():
     universe = pd.DataFrame(
         [
             {
@@ -94,12 +95,11 @@ def test_stop_falls_back_to_atr_when_no_sma_column():
                 "fcf_ttm": 10_000_000,
                 "debt_to_equity": 0.4,
                 "atr": 2.0,
+                "contraction_low_20": 96.0,
             }
         ]
     )
 
     result = rules(universe)
 
-    assert result["ticker"].tolist() == ["AAA"]
-    assert result.iloc[0]["stop_loss"] == 94.0
-    assert result.iloc[0]["take_profit"] == 118.0
+    assert result.empty

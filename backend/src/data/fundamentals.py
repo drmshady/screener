@@ -244,6 +244,26 @@ class FundamentalsLoader:
             by_end[row["end"]] = row  # later filing for the same period end wins
         return [Decimal(str(by_end[end]["val"])) for end in sorted(by_end.keys())]
 
+    def _annual_period_end_as_of(
+        self, payload: dict[str, Any], tag: str, as_of: date, form: str = "10-K"
+    ) -> str | None:
+        """Period-end (``end``) of the latest annual value used by `pair()` for
+        `tag`, or None if unavailable. Anchors fair-value staleness (feature 011
+        US3, contracts/fair-value.md) to the same filing `_annual_values_as_of`
+        already selected, without changing its return shape."""
+        rows = [
+            row
+            for row in self._facts(payload, tag)
+            if row.get("form") == form
+            and row.get("end")
+            and row.get("filed")
+            and row.get("val") is not None
+            and date.fromisoformat(row["filed"]) <= as_of
+        ]
+        if not rows:
+            return None
+        return sorted(rows, key=lambda r: (r["end"], r["filed"]))[-1]["end"]
+
     def _annual_revenue_as_of(
         self, payload: dict[str, Any], as_of: date
     ) -> list[Decimal]:
@@ -282,6 +302,7 @@ class FundamentalsLoader:
             return current, prior
 
         equity, prior_equity = pair("StockholdersEquity")
+        equity_period_end = self._annual_period_end_as_of(payload, "StockholdersEquity", as_of)
         net_income, prior_net_income = pair("NetIncomeLoss")
         operating_cf, prior_operating_cf = pair(
             "NetCashProvidedByUsedInOperatingActivities"
@@ -308,6 +329,10 @@ class FundamentalsLoader:
 
         return {
             "common_equity": equity,
+            # Period end backing `common_equity` (and thus BVPS) — anchors the
+            # fair-value staleness check (feature 011 US3, contracts/fair-value.md).
+            # None when no equity filing was found on/before `as_of`.
+            "period_end": equity_period_end,
             "net_income": net_income,
             "operating_cf": operating_cf,
             "revenue": revenue,

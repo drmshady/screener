@@ -6,7 +6,31 @@ the 010 online-deployment, 009 release-readiness, 008 momentum data-integrity, 0
 side-by-side compare, 005 value strategy, 004 advisor export, 003 comparison, 002
 validation, and 001 MVP below.
 
-## Active feature: 010-online-deployment
+## Active feature: 011-auto-refresh-risk-sizing
+
+Three independent slices layered on the now-live (feature 010) single-owner screener:
+
+1. **US1 — Automated daily refresh & deploy.** Move the existing manual publish chain
+   into an unattended cloud CI cron so the hosted `data_as_of` advances every trading
+   day with zero owner action (GitHub Actions workflow, incremental ingest, failure
+   notification, abort-before-publish safety).
+2. **US2 — Realistic stop-loss & take-profit.** Replace the unbounded R-multiple
+   target derivation with bounded, volatility-/horizon-aware levels (clamped risk
+   distance, reward ceiling, insufficient-data fallback, neutral rationale).
+3. **US3 — Smarter, risk- and conviction-aware sizing.** Replace cap-fill sizing with
+   risk-per-trade backbone (configurable capital fraction risked to the US2 stop),
+   modulated by an empirically-chosen conviction signal (fair-value margin of safety,
+   inverse-vol, strategy-rank, or none — fair value is one candidate, not assumed),
+   still hard-bounded by caps (fail-open on missing modulator input, binding-constraint
+   rationale).
+4. **US4 — Investigation & honest validation.** A reproducible, frozen-snapshot
+   comparison harness chooses each adopted default and gates a one-time, controlled
+   backtest re-baseline (gated on improvement, never silent). Screening/selection rules,
+   gates, and citations are unchanged. Determinism, `data_as_of`+`disclaimer`, zero
+   directive language, and hosted directive-OFF force all preserved. Momentum primary;
+   value tests still pass. Plan: `specs/011-auto-refresh-risk-sizing/plan.md`.
+
+## Prior feature: 010-online-deployment
 
 Make the already-assembled, release-ready screener (009) reachable over the public
 internet for the **single owner**, staying **free**, **single-user**, and within the

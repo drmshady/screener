@@ -3,7 +3,7 @@
 Standalone scripts that are not part of the runtime app (backend/frontend) or
 the CI automation workflow itself — investigation and comparison harnesses.
 
-## compare_methods.py (planned, US4)
+## compare_methods.py (US4)
 
 The FR-019 method-comparison harness for feature
 [011-auto-refresh-risk-sizing](../specs/011-auto-refresh-risk-sizing/plan.md).
@@ -15,8 +15,15 @@ sizing-conviction modulators (fair value / inverse-vol / strategy-rank / none),
 the backtest-baseline delta, and the `selected_default` per dimension — see
 `specs/011-auto-refresh-risk-sizing/contracts/method-comparison.md`.
 
-Not implemented yet — lands in Phase 6 (US4) of
-`specs/011-auto-refresh-risk-sizing/tasks.md` (T033/T034).
+Implemented in Phase 6 (US4) as a deterministic JSON harness:
+
+```powershell
+py -3.12 tools\compare_methods.py --snapshot frozen-sample
+```
+
+The default offline sample keeps CI fast and proves byte-identical regeneration
+plus shipped-default drift detection. Passing a JSON fixture path as `--snapshot`
+lets the same report shape run against a larger frozen candidate snapshot.
 
 ## Daily-refresh automation (US1) — heavy Stooq bundle stays OFF the daily path
 

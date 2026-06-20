@@ -222,6 +222,19 @@ on the owner's machine — reintroduces the manual/always-on dependency US1 remo
 free-tier resource limits. (d) A bespoke scheduler service — more moving parts than
 a stock GitHub Actions cron for a single daily job.
 
+**Known gap (closed by T013a/T013b).** The GitHub Actions runner checks out the
+repo clean each run, and `backend/data/` is gitignored — never committed — so a
+fresh runner has no prior local state for `ingest_daily` to increment from. The
+guard (T011) only extracts `manifest.json` from the previously-published `:latest`
+image to read its `data_as_of`, not the rest of the data tree. Left unfixed, every
+daily run would do a full-history re-fetch instead of a true delta, defeating this
+decision's efficiency intent (correctness is unaffected — only cost/runtime). Fix:
+before the incremental refresh step, restore the full prior data tree (parquet
+bars, `catalog.db`, EDGAR slim cache, manifest) from the previously-published image
+via `docker create` + `docker cp`, failing open (proceed with a full fetch) when
+there is no prior image or extraction fails — see `contracts/daily-automation.md`
+step 0 and `tasks.md` T013a/T013b.
+
 **To confirm in Phase 1/implementation:** a GitHub-hosted runner can `docker
 build` + push to GHCR and POST the HF `restart?factory=true` endpoint (both are
 plain HTTPS + docker, supported on hosted runners).
@@ -246,3 +259,16 @@ byte-identically (SC-007).
 
 **Rationale.** Directly encodes the owner's working rule and FR-019; keeps every
 default defensible and reproducible.
+
+**Phase 6 artifact recorded (T034).** `py -3.12 tools\compare_methods.py
+--snapshot frozen-sample` generated
+`backend/data/method_comparison/frozen-sample.json`. For this deterministic
+offline frozen sample, the selected defaults are: risk-distance band `[1.0,
+4.0]*ATR`, `reward_ceiling_z = 2.5`, `take_profit_r_multiple = 3.0`,
+`reward_ceiling_use_fair_value = false`, fair-value basis `intrinsic_model`,
+`risk_per_trade_fraction = 0.01`, sizing-conviction modulator `none`, and
+inverse-vol baseline `0.02`. The artifact reports
+`shipped_defaults_match_selected = true`, no default divergences,
+`over_ceiling_count = 0`, and a populated `backtest_baseline_delta` with
+`improvement = false`, so the gated re-baseline remains blocked unless a later
+real-snapshot artifact shows improvement.

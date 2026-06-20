@@ -80,3 +80,44 @@ def risk_per_trade_fraction() -> float:
     Override with SCREENER_RISK_PER_TRADE_FRACTION.
     """
     return float(os.getenv("SCREENER_RISK_PER_TRADE_FRACTION", "0.01"))
+
+
+_FAIR_VALUE_BASES = {"valuation_yields", "intrinsic_model"}
+
+
+def fair_value_basis() -> str:
+    """Which free, point-in-time basis backs the fair-value estimate
+    (indicators/fair_value.py): "valuation_yields" (book value per share from the
+    existing book/market yield) or "intrinsic_model" (Graham number from the same
+    yield-derived EPS/BVPS). Default "intrinsic_model" (placeholder, see Decision 6
+    / contracts/fair-value.md — US4 picks empirically). Override with
+    SCREENER_FAIR_VALUE_BASIS; an unrecognized value falls back to the default.
+    """
+    value = os.getenv("SCREENER_FAIR_VALUE_BASIS", "intrinsic_model").strip()
+    return value if value in _FAIR_VALUE_BASES else "intrinsic_model"
+
+
+_SIZING_CONVICTION_SIGNALS = {"fair_value", "inverse_vol", "strategy_rank", "none"}
+
+
+def sizing_conviction_signal() -> str:
+    """Which candidate conviction modulator (Decision 3) scales the risk-per-trade
+    sizing backbone: "fair_value" (margin of safety), "inverse_vol" (lower
+    volatility sized relatively larger), "strategy_rank" (higher-ranked candidate
+    sized relatively larger), or "none" (the honest risk-per-trade-only baseline).
+    Default "none" (placeholder, see Decision 6 — US4 picks the winner on real
+    data; fair value is one candidate, not assumed). Override with
+    SCREENER_SIZING_CONVICTION_SIGNAL; an unrecognized value falls back to "none".
+    """
+    value = os.getenv("SCREENER_SIZING_CONVICTION_SIGNAL", "none").strip()
+    return value if value in _SIZING_CONVICTION_SIGNALS else "none"
+
+
+def sizing_inverse_vol_baseline() -> float:
+    """Reference ATR/price volatility the inverse-vol conviction modulator scales
+    against (scale = baseline / candidate_volatility, clamped). Default 0.02
+    (placeholder, see Decision 6). Only consulted when
+    sizing_conviction_signal() == "inverse_vol". Override with
+    SCREENER_SIZING_INVERSE_VOL_BASELINE.
+    """
+    return float(os.getenv("SCREENER_SIZING_INVERSE_VOL_BASELINE", "0.02"))

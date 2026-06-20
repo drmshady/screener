@@ -103,6 +103,8 @@ def portfolio_quotes(request: PortfolioQuotesRequest) -> PortfolioQuotesResponse
                 stop_loss=_money_or_none(levels["stop_loss"]),
                 tighter_stop_loss=_money_or_none(levels["tighter_stop_loss"]),
                 take_profit=_money_or_none(levels["take_profit"]),
+                fair_value=_money_or_none(row.get("fair_value")),
+                fair_value_trust_flag=row.get("fair_value_trust_flag"),
                 is_stale=is_stale,
                 data_notes=notes,
                 data_as_of=data_as_of,

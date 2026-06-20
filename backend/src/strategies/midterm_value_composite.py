@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..lib import flags
 from ..models.strategy import BacktestSummary, Modification, Strategy, StrategyParameter
 from ..screening.integrity.contract import OutputContract
 from ..screening.integrity.invariants import (
@@ -30,6 +31,7 @@ from ._helpers.reference_thresholds import load_reference_thresholds
 from ._helpers.sector_rank import rank_within_sector
 from ._helpers.value_composite import compute_value_composite
 from ._registry import registry
+from .levels import derive_bounded_levels
 
 # Operator override (mirrors midterm_52w_high_momentum): the backtest's
 # survivorship check still FAILS on the free Stooq bundle (no delisted tickers),
@@ -412,32 +414,51 @@ def prepare_universe_gates(df: pd.DataFrame) -> tuple[pd.DataFrame, float | None
     return df, _composite_threshold(df)
 
 
-def derive_levels(row) -> dict[str, float | None]:
-    close = _as_float(row.get("close"))
-    atr = _as_float(row.get("atr"))
-    if close is None or atr is None:
-        return {"entry": close, "stop_loss": None, "tighter_stop_loss": None, "take_profit": None}
-    entry = close
-    atr_stop = entry - (3 * atr)
-    sma_200 = _as_float(row.get("sma_200"))
-    trend_stop = sma_200 if sma_200 is not None and 0 < sma_200 < entry else atr_stop
-    contraction_low_20 = _as_float(row.get("contraction_low_20"))
-    if contraction_low_20 is not None:
-        structure_stop = contraction_low_20 - (
-            PARAMETERS["structure_stop_buffer_atr"].default * atr
-        )
-        if structure_stop <= 0 or structure_stop >= entry:
-            structure_stop = atr_stop
-    else:
-        structure_stop = atr_stop
-    stop_loss = trend_stop
-    take_profit = entry + PARAMETERS["take_profit_r_multiple"].default * (entry - stop_loss)
-    return {
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "tighter_stop_loss": structure_stop,
-        "take_profit": take_profit,
-    }
+def derive_levels(row) -> dict[str, float | str | list[str] | None]:
+    level_row = dict(row)
+    swing_low = _as_float(level_row.get("contraction_low_20"))
+    if swing_low is None or swing_low <= 0:
+        close = _as_float(level_row.get("close"))
+        atr = _as_float(level_row.get("atr"))
+        buffer = float(PARAMETERS["structure_stop_buffer_atr"].default)
+        if close is not None and atr is not None:
+            level_row["contraction_low_20"] = close - ((3.0 - buffer) * atr)
+    return derive_bounded_levels(
+        level_row,
+        risk_distance_atr_lo=flags.risk_distance_atr_lo(),
+        risk_distance_atr_hi=flags.risk_distance_atr_hi(),
+        take_profit_r_multiple=float(PARAMETERS["take_profit_r_multiple"].default),
+        reward_ceiling_z=flags.reward_ceiling_z(),
+        reward_ceiling_use_fair_value=flags.reward_ceiling_use_fair_value(),
+        fair_value=level_row.get("fair_value"),
+        fair_value_trusted=level_row.get("fair_value_trust_flag") == "trusted",
+        holding_period_days=HOLDING_PERIOD,
+        structure_stop_buffer_atr=float(PARAMETERS["structure_stop_buffer_atr"].default),
+        stop_mode="trend",
+    )
+
+
+def _attach_bounded_levels(frame: pd.DataFrame) -> pd.DataFrame:
+    keys = (
+        "entry",
+        "stop_loss",
+        "tighter_stop_loss",
+        "take_profit",
+        "risk_distance",
+        "reward_distance",
+        "reward_ceiling_basis",
+        "bounds_applied",
+        "levels_state",
+        "rationale",
+    )
+    if frame.empty:
+        for key in keys:
+            frame[key] = []
+        return frame
+    level_rows = [derive_levels(row) for _, row in frame.iterrows()]
+    for key in keys:
+        frame[key] = [levels.get(key) for levels in level_rows]
+    return frame
 
 
 def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
@@ -550,34 +571,10 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         matched, score_column="score", max_per_sector=PARAMETERS["max_per_sector"].default
     )
 
-    # Levels.
-    matched["entry"] = matched["close"]
-    atr_stop = matched["entry"] - (3 * matched["atr"])
-    if "sma_200" in matched.columns:
-        sma_valid = (
-            matched["sma_200"].notna()
-            & (matched["sma_200"] > 0)
-            & (matched["sma_200"] < matched["entry"])
-        )
-        trend_stop = matched["sma_200"].where(sma_valid, atr_stop)
-    else:
-        trend_stop = atr_stop
-    if "contraction_low_20" in matched.columns:
-        buffer = PARAMETERS["structure_stop_buffer_atr"].default * matched["atr"]
-        structure_stop = matched["contraction_low_20"] - buffer
-        struct_valid = (
-            matched["contraction_low_20"].notna()
-            & (structure_stop > 0)
-            & (structure_stop < matched["entry"])
-        )
-        structure_stop = structure_stop.where(struct_valid, atr_stop)
-    else:
-        structure_stop = atr_stop
-    matched["stop_loss"] = trend_stop
-    matched["tighter_stop_loss"] = structure_stop
-    matched["take_profit"] = matched["entry"] + PARAMETERS[
-        "take_profit_r_multiple"
-    ].default * (matched["entry"] - matched["stop_loss"])
+    matched = _attach_bounded_levels(matched)
+    matched = matched[matched["levels_state"] == "ok"]
+    if matched.empty:
+        return _with_notes(matched)
 
     # Per-candidate gate breakdown + warnings.
     context = evaluation_context(
@@ -590,7 +587,7 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
     matched["warning_count"] = matched["warnings"].apply(len)
 
     if hard_mode:
-        matched["reason"] = f"{', '.join(gates_applied).capitalize()}; trailing 200-day SMA stop"
+        matched["reason"] = f"{', '.join(gates_applied).capitalize()}; bounded risk-level overlay"
     else:
         def _row_reason(row) -> str:
             gr = row["gate_results"]
@@ -601,7 +598,7 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
                 parts.append("Passed " + ", ".join(passed))
             if warned:
                 parts.append("Warnings: " + ", ".join(warned))
-            parts.append("trailing 200-day SMA stop")
+            parts.append("bounded risk-level overlay")
             return "; ".join(parts)
 
         matched["reason"] = matched.apply(_row_reason, axis=1)

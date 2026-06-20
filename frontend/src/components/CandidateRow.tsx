@@ -139,8 +139,21 @@ export function CandidateRow({
             })()}
           </div>
         ) : null}
+        {candidate.rationale ? (
+          <div className="mt-2 text-xs italic text-slate-600">{candidate.rationale}</div>
+        ) : null}
       </td>
-      <td className="px-4 py-3 text-right text-sm text-slate-700">{formatMoney(candidate.take_profit, candidate.ticker)}</td>
+      <td className="px-4 py-3 text-right text-sm text-slate-700">
+        {formatMoney(candidate.take_profit, candidate.ticker)}
+        {candidate.fair_value && candidate.fair_value_trust_flag === 'trusted' ? (
+          <div className="mt-1 text-xs text-slate-600">
+            fair value: {formatMoney(String(candidate.fair_value), candidate.ticker)}
+            {candidate.fair_value_basis ? ` (${candidate.fair_value_basis})` : null}
+          </div>
+        ) : candidate.fair_value_trust_flag && candidate.fair_value_trust_flag !== 'trusted' ? (
+          <div className="mt-1 text-xs text-slate-400">fair value: {candidate.fair_value_trust_flag}</div>
+        ) : null}
+      </td>
       <td className="px-4 py-3 text-sm text-slate-700">{candidate.reason}</td>
       <td className="px-4 py-3 text-sm text-slate-700">
         <EventsBadge candidate={candidate} />

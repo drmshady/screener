@@ -72,10 +72,10 @@ def _overlay_edgar(snapshot: pd.DataFrame, symbol: str, as_of: str) -> None:
     """Fill point-in-time EDGAR fundamentals (esp. asset_growth, which the yfinance
     profile path doesn't compute) onto the single-ticker row so the quality and
     asset-growth gates have data."""
+    loader = FundamentalsLoader()
     try:
-        q = FundamentalsLoader().quality_metrics_as_of(
-            symbol, date.fromisoformat(as_of[:10])
-        )
+        payload = loader.fetch_company_facts(symbol)
+        q = loader.quality_metrics_as_of(symbol, date.fromisoformat(as_of[:10]), payload=payload)
     except Exception:
         return
     idx = snapshot.index[0]
@@ -83,26 +83,53 @@ def _overlay_edgar(snapshot: pd.DataFrame, symbol: str, as_of: str) -> None:
         cur = snapshot.at[idx, key] if key in snapshot.columns else None
         if (cur is None or pd.isna(cur)) and q.get(key) is not None:
             snapshot.at[idx, key] = q.get(key)
+    # Feature 011 (US3): momentum's quality overlay above doesn't compute the
+    # value yields the fair-value estimate is derived from; reuse the value
+    # overlay so a trusted fair value is available for the reward ceiling (T018)
+    # and sizing (T028) here too. Pass the already-fetched payload so this
+    # doesn't double the EDGAR fetch/parse cost per request.
+    _overlay_edgar_value(snapshot, symbol, as_of, payload=payload)
 
 
-def _overlay_edgar_value(snapshot: pd.DataFrame, symbol: str, as_of: str) -> None:
+def _overlay_edgar_value(
+    snapshot: pd.DataFrame, symbol: str, as_of: str, payload: dict | None = None
+) -> None:
     """Fill point-in-time EDGAR value-composite + Piotroski inputs onto the
     single-ticker row (the yfinance profile path that builds single-ticker
-    snapshots doesn't compute them). Only fills missing cells; never clobbers."""
+    snapshots doesn't compute them). Only fills missing cells; never clobbers.
+
+    Also recomputes the feature-011 fair-value estimate from the (possibly just
+    -filled) yields, since the initial single-ticker snapshot build runs before
+    this overlay and would otherwise carry a stale/unavailable estimate."""
+    loader = FundamentalsLoader()
     try:
-        vm = FundamentalsLoader().value_metrics_as_of(
-            symbol, date.fromisoformat(as_of[:10])
-        )
+        if payload is None:
+            payload = loader.fetch_company_facts(symbol)
+        vm = loader.value_metrics_as_of(symbol, date.fromisoformat(as_of[:10]), payload=payload)
     except Exception:
         return
-    from ..screening.engine import _value_row_fields
+    from ..screening.engine import _fair_value_row_fields, _value_row_fields
 
     idx = snapshot.index[0]
-    fields = _value_row_fields({"value_metrics": vm}, float(snapshot.at[idx, "close"]))
+    close = float(snapshot.at[idx, "close"])
+    fields = _value_row_fields({"value_metrics": vm}, close)
     for key, val in fields.items():
         cur = snapshot.at[idx, key] if key in snapshot.columns else None
         if (cur is None or pd.isna(cur)) and val is not None:
             snapshot.at[idx, key] = val
+
+    refreshed = {
+        "book_to_market": snapshot.at[idx, "book_to_market"] if "book_to_market" in snapshot.columns else None,
+        "earnings_yield": snapshot.at[idx, "earnings_yield"] if "earnings_yield" in snapshot.columns else None,
+        "value_metrics_period_end": snapshot.at[idx, "value_metrics_period_end"]
+        if "value_metrics_period_end" in snapshot.columns
+        else None,
+    }
+    fair_fields = _fair_value_row_fields(
+        refreshed, close, date.fromisoformat(as_of[:10])
+    )
+    for key, val in fair_fields.items():
+        snapshot.at[idx, key] = val
 
 
 def compute_candidate_result(
@@ -202,6 +229,12 @@ def compute_candidate_result(
             else None
         ),
         take_profit=f"{float(levels['take_profit']):.2f}",
+        risk_distance=_as_float(levels.get("risk_distance")),
+        reward_distance=_as_float(levels.get("reward_distance")),
+        reward_ceiling_basis=levels.get("reward_ceiling_basis"),
+        bounds_applied=list(levels.get("bounds_applied") or []),
+        levels_state=levels.get("levels_state"),
+        rationale=levels.get("rationale"),
         return_12_1=_as_float(row.get("return_12_1")),
         vol_scalar=_as_float(row.get("vol_scalar")),
         dist_to_high=_as_float(row.get("dist_to_high")),
@@ -210,6 +243,10 @@ def compute_candidate_result(
         fcf_ttm=_as_float(row.get("fcf_ttm")),
         gp_to_assets=_as_float(row.get("gp_to_assets")),
         asset_growth=_as_float(row.get("asset_growth")),
+        fair_value=_as_float(row.get("fair_value")),
+        fair_value_basis=row.get("fair_value_basis"),
+        fair_value_trust_flag=row.get("fair_value_trust_flag"),
+        fair_value_margin_of_safety=_as_float(row.get("fair_value_margin_of_safety")),
         gate_results=gate_results,
         data_notes=data_notes,
         material_input_freshness=_material_input_freshness(data_as_of, as_of),
@@ -283,6 +320,12 @@ def _compute_value_candidate_result(
             else None
         ),
         take_profit=f"{float(levels['take_profit']):.2f}",
+        risk_distance=_as_float(levels.get("risk_distance")),
+        reward_distance=_as_float(levels.get("reward_distance")),
+        reward_ceiling_basis=levels.get("reward_ceiling_basis"),
+        bounds_applied=list(levels.get("bounds_applied") or []),
+        levels_state=levels.get("levels_state"),
+        rationale=levels.get("rationale"),
         atr=_as_float(row.get("atr")),
         debt_to_equity=_as_float(eval_row.get("debt_to_equity")),
         fcf_ttm=_as_float(eval_row.get("fcf_ttm")),
@@ -293,6 +336,10 @@ def _compute_value_candidate_result(
         sales_yield=_as_float(eval_row.get("sales_yield")),
         f_score=int(f_score) if f_score is not None and not pd.isna(f_score) else None,
         f_score_evaluable=int(f_eval) if f_eval is not None and not pd.isna(f_eval) else None,
+        fair_value=_as_float(eval_row.get("fair_value")),
+        fair_value_basis=eval_row.get("fair_value_basis"),
+        fair_value_trust_flag=eval_row.get("fair_value_trust_flag"),
+        fair_value_margin_of_safety=_as_float(eval_row.get("fair_value_margin_of_safety")),
         gate_results=gate_results,
         data_notes=data_notes,
         material_input_freshness=_material_input_freshness(data_as_of, as_of),

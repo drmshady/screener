@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..lib import flags
 from ..models.strategy import BacktestSummary, Modification, Strategy, StrategyParameter
 from ..screening.integrity.contract import OutputContract
 from ..screening.integrity.invariants import (
@@ -26,6 +27,7 @@ from ._helpers.reference_thresholds import load_reference_thresholds
 from ._helpers.sector_rank import rank_within_sector
 from ._helpers.vol_scaling import calculate_volatility_scalar
 from ._registry import registry
+from .levels import derive_bounded_levels
 
 # Operator override (2026-06-10): treat this strategy as valid / enabled-by-default
 # for now, even though the backtest's survivorship_bias check still FAILS (the free
@@ -474,39 +476,51 @@ def _gate_results_for_row(
     )
 
 
-def derive_levels(row) -> dict[str, float | None]:
-    close = _as_float(row.get("close"))
-    atr = _as_float(row.get("atr"))
-    if close is None or atr is None:
-        return {
-            "entry": close,
-            "stop_loss": None,
-            "tighter_stop_loss": None,
-            "take_profit": None,
-        }
-    entry = close
-    atr_stop = entry - (3 * atr)
-    sma_200 = _as_float(row.get("sma_200"))
-    trend_stop = sma_200 if sma_200 is not None and 0 < sma_200 < entry else atr_stop
-    contraction_low_20 = _as_float(row.get("contraction_low_20"))
-    if contraction_low_20 is not None:
-        structure_stop = contraction_low_20 - (
-            PARAMETERS["structure_stop_buffer_atr"].default * atr
-        )
-        if structure_stop <= 0 or structure_stop >= entry:
-            structure_stop = atr_stop
-    else:
-        structure_stop = atr_stop
-    stop_loss = structure_stop if _active_stop_mode() == "structure" else trend_stop
-    take_profit = entry + PARAMETERS["take_profit_r_multiple"].default * (
-        entry - stop_loss
+def derive_levels(row) -> dict[str, float | str | list[str] | None]:
+    level_row = dict(row)
+    swing_low = _as_float(level_row.get("contraction_low_20"))
+    if swing_low is None or swing_low <= 0:
+        close = _as_float(level_row.get("close"))
+        atr = _as_float(level_row.get("atr"))
+        buffer = float(PARAMETERS["structure_stop_buffer_atr"].default)
+        if close is not None and atr is not None:
+            level_row["contraction_low_20"] = close - ((3.0 - buffer) * atr)
+    return derive_bounded_levels(
+        level_row,
+        risk_distance_atr_lo=flags.risk_distance_atr_lo(),
+        risk_distance_atr_hi=flags.risk_distance_atr_hi(),
+        take_profit_r_multiple=float(PARAMETERS["take_profit_r_multiple"].default),
+        reward_ceiling_z=flags.reward_ceiling_z(),
+        reward_ceiling_use_fair_value=flags.reward_ceiling_use_fair_value(),
+        fair_value=level_row.get("fair_value"),
+        fair_value_trusted=level_row.get("fair_value_trust_flag") == "trusted",
+        holding_period_days=HOLDING_PERIOD,
+        structure_stop_buffer_atr=float(PARAMETERS["structure_stop_buffer_atr"].default),
+        stop_mode=_active_stop_mode(),
     )
-    return {
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "tighter_stop_loss": structure_stop,
-        "take_profit": take_profit,
-    }
+
+
+def _attach_bounded_levels(frame: pd.DataFrame) -> pd.DataFrame:
+    keys = (
+        "entry",
+        "stop_loss",
+        "tighter_stop_loss",
+        "take_profit",
+        "risk_distance",
+        "reward_distance",
+        "reward_ceiling_basis",
+        "bounds_applied",
+        "levels_state",
+        "rationale",
+    )
+    if frame.empty:
+        for key in keys:
+            frame[key] = []
+        return frame
+    level_rows = [derive_levels(row) for _, row in frame.iterrows()]
+    for key in keys:
+        frame[key] = [levels.get(key) for levels in level_rows]
+    return frame
 
 
 def _active_stop_mode() -> str:
@@ -814,52 +828,11 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         max_per_sector=PARAMETERS["max_per_sector"].default,
     )
 
-    # 7. Entry / Stop Loss / Take Profit derivation. BOTH stops are always
-    # computed so the UI can show them side by side; the active mode selects which
-    # one is "primary" (drives the take-profit). Default primary = trend stop.
-    matched["entry"] = matched["close"]
-    # 3-ATR disaster stop is the universal fallback when a method's preferred
-    # level is unavailable or sits at/above entry.
-    atr_stop = matched["entry"] - (3 * matched["atr"])
-
-    # (a) Trend stop: per-stock 200-day SMA when below entry (Faber), else 3-ATR.
-    if "sma_200" in matched.columns:
-        sma_valid = (
-            matched["sma_200"].notna()
-            & (matched["sma_200"] > 0)
-            & (matched["sma_200"] < matched["entry"])
-        )
-        trend_stop = matched["sma_200"].where(sma_valid, atr_stop)
-    else:
-        trend_stop = atr_stop
-
-    # (b) Structure stop: just below the 20-day consolidation low (− ATR buffer).
-    # Usually tighter than the 200-SMA for a name near its high (better reward:risk).
-    if "contraction_low_20" in matched.columns:
-        buffer = PARAMETERS["structure_stop_buffer_atr"].default * matched["atr"]
-        structure_stop = matched["contraction_low_20"] - buffer
-        struct_valid = (
-            matched["contraction_low_20"].notna()
-            & (structure_stop > 0)
-            & (structure_stop < matched["entry"])
-        )
-        structure_stop = structure_stop.where(struct_valid, atr_stop)
-    else:
-        structure_stop = atr_stop
-
-    if _active_stop_mode() == "structure":
-        matched["stop_loss"] = structure_stop
-        stop_label = "hard stop below 20-day consolidation low"
-    else:
-        matched["stop_loss"] = trend_stop
-        stop_label = "trailing 200-day SMA stop"
-    # Always expose the structure (swing-low) stop as the tighter alternative.
-    matched["tighter_stop_loss"] = structure_stop
-
-    # Take-profit target as an R-multiple of the (entry - stop) risk.
-    matched["take_profit"] = matched["entry"] + PARAMETERS[
-        "take_profit_r_multiple"
-    ].default * (matched["entry"] - matched["stop_loss"])
+    matched = _attach_bounded_levels(matched)
+    matched = matched[matched["levels_state"] == "ok"]
+    if matched.empty:
+        return _with_notes(matched)
+    stop_label = "bounded risk-level overlay"
     # Per-candidate gate-by-gate breakdown (pass / warn / skipped, with values).
     gate_context = evaluation_context(
         matched,
