@@ -41,4 +41,7 @@ def test_deterministic_on_fixed_input() -> None:
     request = _request(entry=Decimal("50"), stop_loss=Decimal("44"))
     first = size_position(request)
     second = size_position(request)
-    assert first == second
+    # Exclude data_as_of: it is a wall-clock stamp (utc_now_iso), not part of the
+    # sizing computation. Comparing whole responses made this determinism test
+    # flaky on coarse-grained clocks (two calls straddling a ~15ms Windows tick).
+    assert first.model_dump(exclude={"data_as_of"}) == second.model_dump(exclude={"data_as_of"})

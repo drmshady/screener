@@ -25,6 +25,23 @@ The default offline sample keeps CI fast and proves byte-identical regeneration
 plus shipped-default drift detection. Passing a JSON fixture path as `--snapshot`
 lets the same report shape run against a larger frozen candidate snapshot.
 
+The `sizing_metrics` and `backtest_baseline_delta` sections are **computed, not
+stubbed**:
+
+- `conviction_head_to_head` sizes every candidate through the real
+  `portfolio.sizing.size_position` under each modulator (none / fair_value /
+  inverse_vol / strategy_rank) and reports how many it actually modulates and the
+  resulting share dispersion. `wider_stop_smaller_monotonicity` is verified on the
+  real risk-per-trade output (cap-bound rows excluded), not asserted.
+- `backtest_baseline_delta` runs the runner's own `_forward_return` (fixed
+  horizon) vs `_modeled_exit_return` (level-driven) over forward bars. The offline
+  frozen sample uses a deterministic price fixture (`basis =
+  synthetic_fixture_mechanics_check`) — a mechanics/regression check that is never
+  `rebaseline_eligible`. A `--snapshot` JSON whose candidates carry a
+  `forward_bars` list (with optional `as_of`/`horizon_days`) makes the delta run on
+  real bars (`basis = real_bars`); only then can a measured improvement open the
+  re-baseline gate (T038, still never silent).
+
 ## Daily-refresh automation (US1) — heavy Stooq bundle stays OFF the daily path
 
 `.github/workflows/daily-refresh.yml` runs `scripts/publish_chain.ps1` on a
