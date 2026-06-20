@@ -17,3 +17,14 @@ the backtest-baseline delta, and the `selected_default` per dimension — see
 
 Not implemented yet — lands in Phase 6 (US4) of
 `specs/011-auto-refresh-risk-sizing/tasks.md` (T033/T034).
+
+## Daily-refresh automation (US1) — heavy Stooq bundle stays OFF the daily path
+
+`.github/workflows/daily-refresh.yml` runs `scripts/publish_chain.ps1` on a
+weekday cron. That chain only ever runs the **incremental** `ingest_daily`
+(prices/events/Shariah/fundamentals delta) — never `-FullStooq`. The ~90-day
+deep-history Stooq bundle (`scripts/refresh_stooq_history.py`) stays on its
+existing, separate, infrequent cadence (quarterly `workflow_dispatch` or a
+manual `scripts\publish.ps1 -FullStooq` run); putting it on the daily path
+would be slow, wasteful, and unnecessary for end-of-day incremental freshness
+(research.md Decision 5).

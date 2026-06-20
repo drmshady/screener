@@ -1,0 +1,77 @@
+name: Daily Refresh & Deploy
+
+# Unattended cloud-CI replacement for the manual scripts/publish.ps1 chain
+# (feature 011, US1, contracts/daily-automation.md). The hosted backend runs
+# NO ingest of its own (010 preserved) -- this is the ONLY thing that ingests
+# and republishes the snapshot. Idempotent / non-trading-day no-op via the
+# new-session guard; abort-before-publish on any failed step so the last
+# known-good snapshot stays live.
+
+on:
+  schedule:
+    # After the US market close on weekdays (UTC). The guard's own
+    # 22:00 UTC settle buffer (market_calendar.latest_completed_trading_day)
+    # means this run always sees a session that buffer has already cleared.
+    - cron: "0 23 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/drmshady/screener
+  SPACE_ID: occlusion2/screener
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend dependencies
+        run: pip install -e "backend[dev]"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Set up Docker Buildx (layer caching)
+        uses: docker/setup-buildx-action@v3
+
+      # Guard -> incremental ingest -> integrity -> secret-scan -> build ->
+      # push -> Factory-rebuild, ALL in one shared codepath also used by the
+      # local owner publish (scripts/publish.ps1 -> scripts/publish_chain.ps1,
+      # research.md Decision 5) -- one script run so a no-op session guard
+      # short-circuits before any build/push/deploy. Secrets are read from
+      # the environment only, never written to a file.
+      - name: Run publish chain (guard, refresh, integrity, secret-scan, build, push, deploy)
+        shell: pwsh
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          SCREENER_INDEPENDENT_QUOTE_API_KEY: ${{ secrets.SCREENER_INDEPENDENT_QUOTE_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy
+
+      # GitHub already emails repo watchers on a failed scheduled workflow run
+      # by default; this step adds the failing-step detail to the run summary
+      # so the notification links straight to the cause (FR-004).
+      - name: Annotate failure for the owner notification
+        if: failure()
+        shell: pwsh
+        run: |
+          "::error title=Daily refresh aborted::A step in the publish chain failed -- the last known-good snapshot remains live. See the failed step's log above for detail." | Out-Host
+          "## Daily refresh FAILED`nThe last known-good snapshot is still live; no partial snapshot was published." >> $env:GITHUB_STEP_SUMMARY

@@ -1,0 +1,161 @@
+# Shared publish chain for the hosted screener (features 010/011).
+#
+# One codepath for both the local owner-run publish (`scripts/publish.ps1`) and
+# the unattended GitHub Actions daily-refresh workflow
+# (`.github/workflows/daily-refresh.yml`), so CI and local never drift
+# (research.md Decision 5).
+#
+# Ordered, abort-before-publish on any failed step:
+#   new-session guard -> incremental ingest_daily -> integrity harness (008) ->
+#   release secret scan -> docker build (only if a new session was published) ->
+#   push GHCR -> optional HF Factory-rebuild.
+#
+# The heavy ~90-day Stooq deep-history bundle is NEVER on this path by default
+# (-FullStooq opts in for the separate, infrequent job; research.md Decision 5).
+#
+# SECRETS: none are stored or written by this script. GHCR push uses the
+# caller's existing `docker login ghcr.io` session; the optional Deploy step
+# reads $env:HF_TOKEN at runtime only (FR-002a/006, SC-008).
+#
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File scripts\publish_chain.ps1 [-SkipGuard] [-SkipRefresh] ...
+
+[CmdletBinding()]
+param(
+    [switch]$SkipGuard,
+    [switch]$SkipRefresh,
+    [switch]$FullStooq,
+    [switch]$SkipSecretScan,
+    [switch]$Deploy,
+    [string]$Image    = 'ghcr.io/drmshady/screener',
+    [string]$Tag      = (Get-Date -Format 'yyyy-MM-dd'),
+    [string]$SpaceId  = 'occlusion2/screener'
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+Set-Location $RepoRoot
+
+function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
+function Die($msg)  { Write-Host "::error::FAILED: $msg" -ForegroundColor Red; exit 1 }
+
+# Native-command runner that aborts on nonzero exit (PS 5.1 has no `&&`).
+function Run($exe, [string[]]$cmdArgs) {
+    Write-Host "> $exe $($cmdArgs -join ' ')" -ForegroundColor DarkGray
+    & $exe @cmdArgs
+    if ($LASTEXITCODE -ne 0) { Die "$exe exited $LASTEXITCODE" }
+}
+
+# --- 0. New-session / idempotency guard (FR-005) ---------------------------
+if ($SkipGuard) {
+    Step 'New-session guard SKIPPED (-SkipGuard) -- publishing unconditionally'
+} else {
+    Step 'New-session guard'
+    $publishedManifest = Join-Path ([System.IO.Path]::GetTempPath()) 'screener-published-manifest.json'
+    if (Test-Path -LiteralPath $publishedManifest) { Remove-Item -LiteralPath $publishedManifest -Force }
+    cmd /c "docker pull $Image`:latest >NUL 2>&1"
+    if ($LASTEXITCODE -eq 0) {
+        cmd /c "docker run --rm $Image`:latest cat /app/backend/data/manifest.json > `"$publishedManifest`" 2>NUL"
+    }
+    $guardArgs = @('-3.12', 'scripts\_session_guard.py')
+    if (Test-Path -LiteralPath $publishedManifest) {
+        $guardArgs += @('--published-manifest', $publishedManifest)
+    }
+    $guardOutput = & py @guardArgs
+    if ($LASTEXITCODE -ne 0) { Die 'session guard failed to run' }
+    $outcome = ($guardOutput | Select-Object -Last 1).Trim()
+    $guardOutput | Select-Object -SkipLast 1 | ForEach-Object { Write-Host $_ }
+    if ($outcome -eq 'noop') {
+        Write-Host 'No new completed trading session to publish -- documented no-op.' -ForegroundColor Yellow
+        exit 0
+    }
+    Write-Host "Guard: $outcome" -ForegroundColor Green
+}
+
+# --- 1. Refresh data locally (incremental only) -----------------------------
+if ($SkipRefresh) {
+    Step 'Data refresh SKIPPED (-SkipRefresh) -- baking whatever is on disk'
+} else {
+    Step 'Refresh universe'
+    Run 'py' @('-3.12', 'scripts\seed_universe.py')
+
+    if ($FullStooq) {
+        Step 'Refresh full Stooq deep-history bundle (heavy; ~90-day cadence)'
+        Run 'py' @('-3.12', 'scripts\refresh_stooq_history.py')
+    } else {
+        Write-Host 'Skipping full Stooq bundle (use -FullStooq ~quarterly). Incremental bars come from ingest_daily.'
+    }
+
+    # NO --skip-events: earnings/8-K must refresh into catalog.db or the hosted
+    # snapshot ships stale earnings badges (see deploy-010 gotchas).
+    Step 'Incremental daily ingest (prices + events + Shariah + fundamentals)'
+    Run 'py' @('-3.12', 'scripts\ingest_daily.py')
+}
+
+# --- 2. Verify freshness ----------------------------------------------------
+Step 'Verify snapshot freshness (backend/data/manifest.json)'
+$manifestPath = Join-Path $RepoRoot 'backend\data\manifest.json'
+if (-not (Test-Path $manifestPath)) { Die "manifest.json not found at $manifestPath" }
+Write-Host "manifest.json last written: $((Get-Item $manifestPath).LastWriteTime)"
+Select-String -Path $manifestPath -Pattern 'data_as_of' |
+    ForEach-Object { Write-Host ('  ' + $_.Line.Trim()) }
+
+# --- 3. Data-integrity harness (008) ----------------------------------------
+Step 'Data-integrity harness'
+$asOf = Get-Date -Format 'yyyy-MM-dd'
+$harnessOut = Join-Path $RepoRoot 'backend\data\harness-report.md'
+Run 'py' @('-3.12', 'scripts\run_integrity_harness.py', '--as-of', $asOf, '--out', $harnessOut)
+
+# --- 4. Release secret scan (SC-008 / FR-002a/006) --------------------------
+if ($SkipSecretScan) {
+    Step 'Secret scan SKIPPED (-SkipSecretScan)'
+} else {
+    Step 'Release secret scan (repo + image copy list)'
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'secret_scan.ps1')
+    if ($LASTEXITCODE -ne 0) { Die 'secret scan found potential secrets -- aborting before build.' }
+}
+
+# --- 5. Build the backend image ---------------------------------------------
+# Already gated on the snapshot having changed -- step 0's guard short-circuits
+# the whole chain (no build/push) when there is no new completed session.
+Step "Build image  $Image`:latest  (+ :$Tag)"
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    # Persist Docker layer cache across CI runs via the GitHub Actions cache backend.
+    Run 'docker' @(
+        'buildx', 'build', '-f', 'backend\Dockerfile',
+        '-t', "$Image`:latest", '-t', "$Image`:$Tag",
+        '--cache-from', 'type=gha', '--cache-to', 'type=gha,mode=max',
+        '--load', '.'
+    )
+} else {
+    Run 'docker' @('build', '-f', 'backend\Dockerfile', '-t', "$Image`:latest", '-t', "$Image`:$Tag", '.')
+}
+
+# --- 6. Push to GHCR ----------------------------------------------------------
+Step 'Push to GHCR'
+Run 'docker' @('push', "$Image`:latest")
+Run 'docker' @('push', "$Image`:$Tag")
+$digest = $null
+try { $digest = (& docker inspect --format '{{index .RepoDigests 0}}' "$Image`:latest") } catch { $digest = $null }
+if ($digest) { Write-Host "Pushed digest: $digest" -ForegroundColor Green }
+
+# --- 7. Deploy: notify, or auto Factory-rebuild with -Deploy ----------------
+if ($Deploy) {
+    Step 'Deploy: Factory-rebuild the Hugging Face Space'
+    $hfToken = $env:HF_TOKEN
+    if (-not $hfToken) { Die '-Deploy needs $env:HF_TOKEN (an HF write token); set it for this session only.' }
+    $uri = "https://huggingface.co/api/spaces/$SpaceId/restart?factory=true"
+    try {
+        Invoke-RestMethod -Method Post -Uri $uri -Headers @{ Authorization = "Bearer $hfToken" } | Out-Null
+        Write-Host "Triggered Factory rebuild of $SpaceId. It will re-pull :latest and restart." -ForegroundColor Green
+    } catch {
+        Die "HF rebuild call failed: $($_.Exception.Message)"
+    }
+} else {
+    Step 'NEXT STEP -- deploy manually'
+    Write-Host "Image published. Factory-reboot https://huggingface.co/spaces/$SpaceId to go live (a plain Restart will NOT re-pull the new image)." -ForegroundColor Yellow
+}
+
+Write-Host "`nDone." -ForegroundColor Green
