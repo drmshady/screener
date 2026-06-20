@@ -1,10 +1,10 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/010-online-deployment/plan.md` (active feature 010), which builds on the
-009 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005
-value strategy, 004 advisor export, 003 comparison, 002 validation, and 001 MVP
-below.
+`specs/011-auto-refresh-risk-sizing/plan.md` (active feature 011), which builds on
+the 010 online-deployment, 009 release-readiness, 008 momentum data-integrity, 006
+side-by-side compare, 005 value strategy, 004 advisor export, 003 comparison, 002
+validation, and 001 MVP below.
 
 ## Active feature: 010-online-deployment
 
