@@ -68,7 +68,11 @@ _STOOQ_SNAPSHOT_CACHE_VERSION = (
     # v5: feature 008 integrity signals (series_max_move_explained,
     # seam_overlap_found) added to the snapshot schema — bump invalidates older
     # cached snapshots that lack them (else stale rows default-pass the contract).
-    "v5"
+    # v6: feature 011 fair-value columns (fair_value, fair_value_basis,
+    # fair_value_trust_flag, fair_value_margin_of_safety, value_metrics_period_end)
+    # added in _compute_snapshot_rows — bump invalidates pre-011 cached snapshots
+    # that lack them (else fair value is silently absent / 0% coverage downstream).
+    "v6"
 )
 _SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[datetime, pd.DataFrame, str]] = {}
 _STOOQ_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[datetime, pd.DataFrame, str]] = {}
