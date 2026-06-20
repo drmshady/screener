@@ -272,3 +272,25 @@ inverse-vol baseline `0.02`. The artifact reports
 `over_ceiling_count = 0`, and a populated `backtest_baseline_delta` with
 `improvement = false`, so the gated re-baseline remains blocked unless a later
 real-snapshot artifact shows improvement.
+
+**Post-merge real-data validation (2026-06-20).** The frozen-sample artifact was
+re-checked against the live momentum snapshot (`data_as_of` 2026-06-18, 20
+candidates). Two findings:
+
+1. *Levels* are clean on real data — `degenerate_rate = 0`, `over_ceiling_count
+   = 0`, all 20 within `[1.0,4.0]·ATR`; the binding constraint is the `4.0·ATR`
+   risk clamp + `R=3.0`, not the vol/horizon reward ceiling.
+2. *Fair value coverage is ~60% trusted* (12/20), NOT 0% — an earlier "0%" read
+   was a stale-snapshot-cache artifact (the cache version was not bumped for the
+   fair-value schema; fixed by bumping `_STOOQ_SNAPSHOT_CACHE_VERSION` v5→v6).
+   With real fair values in hand, the `fair_value` sizing-conviction modulator
+   was A/B'd against `none`: because momentum leaders trade far ABOVE their
+   conservative Graham fair value (margins of safety −218% to −764%), the
+   modulator floors 11 of 12 positions to 0.5× and boosts only 1. Fair-value
+   margin-of-safety is therefore an inappropriate conviction signal for a
+   *momentum* strategy (it penalizes the very names momentum selects). **`none`
+   is retained as the shipped default — now justified on real data, not the
+   synthetic sample.** (Fair-value modulation may suit the postponed value
+   strategy, where names are cheap relative to fundamentals.)
+   `reward_ceiling_use_fair_value = false` is likewise correct for momentum: a
+   fair value below price would cap the target below entry.
