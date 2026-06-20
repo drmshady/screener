@@ -88,20 +88,35 @@ gates — assume **hard mode** unless told otherwise.)
 
 ## Entry / Stop / Take-profit (per surviving candidate)
 
+> **Feature 011 — bounded, volatility-aware levels** (the same shared derivation
+> as momentum, `strategies/levels.py`): risk distance is clamped, the target is
+> capped at a reward ceiling, and missing inputs yield `insufficient_data`
+> instead of a degenerate number. Selection/gates/citations unchanged.
+
 - **Entry** = current close.
-- **3-ATR disaster stop** = `entry − 3 × ATR` — the universal fallback whenever
-  a preferred stop level is unavailable or sits at/above entry.
-- **Trend stop (default)** = the 200-day SMA when it's below entry, else the
-  3-ATR stop. **Note: the 200-day SMA is used ONLY for the stop level — it is
-  NOT an entry filter.** Unlike momentum, value deliberately *enters weakness*,
-  so it does not require `close > SMA-200`.
-- **Structure stop** = `20-day swing low − 0.25 × ATR`
-  (`structure_stop_buffer_atr = 0.25`), exposed as the tighter alternative.
-  Falls back to 3-ATR if invalid.
-- **Take-profit** = `entry + 4.0 × (entry − stop_loss)`
-  (`take_profit_r_multiple = 4.0`) — a **4R** target. This is **more patient
-  than momentum's 3R**, because the mean-reversion thesis needs longer to play
-  out.
+- **Stop candidate** (unchanged technical levels):
+  - **3-ATR disaster stop** = `entry − 3 × ATR` — universal fallback.
+  - **Trend stop (default)** = the 200-day SMA when below entry, else the 3-ATR
+    stop. **The 200-day SMA is the STOP only — NOT an entry filter.** Unlike
+    momentum, value deliberately *enters weakness* (no `close > SMA-200` gate).
+  - **Structure stop** = `20-day swing low − 0.25 × ATR`
+    (`structure_stop_buffer_atr = 0.25`), the tighter alternative.
+- **Risk distance is CLAMPED** to `[1.0, 4.0] × ATR` (+ a low-price floor so
+  `stop_loss > 0`) — same as momentum.
+- **Take-profit** = `entry + 4.0 × risk_distance` (`take_profit_r_multiple =
+  4.0`) — a **4R** target, **more patient than momentum's 3R** (mean-reversion
+  needs longer), then **capped at the reward ceiling** (`z·ATR·√horizon`,
+  `reward_ceiling_z = 2.5`; fair-value cap OFF by default). `levels_state` =
+  `ok` / `insufficient_data`; each candidate carries a neutral `rationale`.
+
+**Fair value & position sizing** work identically to momentum — see
+[01-strategy-rules.md](01-strategy-rules.md) ("Fair value" and "Position sizing").
+The risk-per-trade backbone (`f = 1%` of capital to the stop, hard-bounded by the
+10%/25% caps) is strategy-agnostic. Note: a fair-value conviction modulator is
+**off by default** (`sizing_conviction_signal = none`) but is *more* defensible
+for value than momentum — value names are cheap relative to fundamentals, so a
+positive margin of safety would be a real signal — though it remains unadopted
+pending a real-data A/B on the value screen.
 
 ## Regime favorability
 
@@ -127,9 +142,13 @@ is strongest in **range-bound** markets where mean-reversion dominates.
 | `max_per_sector` | 5 | — | Cap on candidates per sector |
 | `max_debt_equity` | 2.0 | 0–5 | Leverage sanity ceiling (looser than momentum; missing D/E passes through) |
 | `min_momentum_12_1` | -1.0 (off) | -1.0–1.0 | Optional 12-1 momentum floor ("not a falling knife"); `-1.0` disables it, variant uses `-0.20`; missing momentum passes through |
-| `take_profit_r_multiple` | 4.0 | 1–10 | Target as a multiple of risk (more patient than momentum) |
+| `take_profit_r_multiple` | 4.0 | 1–10 | Target as a multiple of (clamped) risk (more patient than momentum) |
 | `trend_sma_length` | 200 | 50–300 | SMA length for the trailing STOP only (not an entry gate) |
 | `structure_stop_buffer_atr` | 0.25 | 0–2 | ATRs below the 20-day low for the structure stop |
+| `risk_distance_atr_lo` / `_hi` | 1.0 / 4.0 | — | Risk-distance clamp in ATRs (011, shared) |
+| `reward_ceiling_z` | 2.5 | 1.5–4.0 | Vol/horizon take-profit ceiling (011, shared) |
+| `risk_per_trade_fraction` | 0.01 | 0.0025–0.02 | Capital fraction risked to the stop = sizing backbone (011, shared) |
+| `sizing_conviction_signal` | none | none/fair_value/inverse_vol/strategy_rank | Conviction modulator on sizing; default none (011, shared) |
 
 ## How this differs from the momentum strategy (quick reference)
 

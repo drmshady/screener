@@ -127,3 +127,26 @@ everything.
 - **Seam adjustment:** For US momentum, history is stitched from Stooq and
   yfinance; a back-adjustment factor is used to align them. If the seam is
   unstable, it is flagged.
+
+## 10. Bounded levels, fair value & sizing (Feature 011)
+
+- **Levels are risk-bounded, not predictions.** Risk distance is clamped to
+  1–4×ATR and the take-profit is a 3R/4R target *capped at a volatility ceiling*.
+  These are disciplined risk geometry, **not** forecasts of where the price will
+  go. When inputs are missing the candidate shows `levels_state =
+  insufficient_data` (no stop/target) — say the levels can't be derived rather
+  than inventing one.
+- **Fair value is a rough, conservative estimate with limited coverage.** It is
+  the **Graham number** from free EDGAR yields (or book value per share) — a
+  blunt instrument. It is `trusted` for only ~60% of momentum candidates;
+  otherwise `unavailable` / `stale` / `out_of_range`. **Momentum winners
+  typically trade well ABOVE Graham fair value** (negative margin of safety) —
+  that is expected and is *not* a sell signal. Never present fair value as a
+  price target, and only lean on it when its trust flag is `trusted`.
+- **Sizing is risk-first and cap-bounded; conviction modulation is OFF.** The
+  default `sizing_conviction_signal = none`: a fair-value modulator was tested
+  and **rejected for momentum** because it shrank almost every winner. So the
+  size reflects the stop width and the caps — nothing more. Don't claim the size
+  encodes "conviction."
+- **Determinism preserved.** The bounded levels and sizing are deterministic on a
+  fixed snapshot (see #7).

@@ -69,20 +69,63 @@ warn-and-rank instead of excluding — assume **hard mode** unless told otherwis
 
 ## Entry / Stop / Take-profit (per surviving candidate)
 
+> **Feature 011 — levels are now BOUNDED & volatility-aware.** The old unbounded
+> `take_profit = entry + 3R·(entry − stop)` could blow a target absurdly far out
+> when a stop sat far below price. Levels are now clamped and carry a neutral
+> `rationale`, an `insufficient_data` fallback, and a `levels_state` flag. Both
+> mid-term strategies share one derivation (`strategies/levels.py`). **Selection,
+> gates, and citations are unchanged — this is presentation/risk only.**
+
 - **Entry** = current close.
-- **3-ATR disaster stop** = `entry − 3 × ATR` — the universal fallback whenever
-  a preferred stop level is unavailable or sits at/above entry.
-- **Trend stop (Faber, default)** = the 200-day SMA when it's below entry, else
-  the 3-ATR stop.
-- **Structure stop** = `20-day consolidation low − 0.25 × ATR`
-  (`structure_stop_buffer_atr = 0.25`), i.e. "just below support." Usually
-  tighter than the 200-SMA stop ⇒ better reward:risk. Falls back to 3-ATR if
-  invalid.
-- **Active stop** = trend stop by default (`stop_mode = "trend"`); switch to
-  `"structure"` for the breakout-workflow style. Both are always shown; the
-  structure stop is exposed as the "tighter alternative."
-- **Take-profit** = `entry + 3.0 × (entry − stop_loss)`
-  (`take_profit_r_multiple = 3.0`, range 1–10) — a 3R target.
+- **Stop candidate** = the same technical stop as before:
+  - **3-ATR disaster stop** = `entry − 3 × ATR` — the universal fallback when a
+    preferred level is unavailable or sits at/above entry.
+  - **Trend stop (Faber, default `stop_mode = "trend"`)** = the 200-day SMA when
+    below entry, else the 3-ATR stop.
+  - **Structure stop** = `20-day consolidation low − 0.25 × ATR`
+    (`structure_stop_buffer_atr = 0.25`), exposed as the "tighter alternative."
+- **Risk distance is then CLAMPED** to `[1.0, 4.0] × ATR`
+  (`risk_distance_atr_lo = 1.0`, `risk_distance_atr_hi = 4.0`) plus a low-price
+  floor so `stop_loss > 0`. A far-below-trend SMA no longer produces a giant
+  risk distance — it is capped at 4·ATR. (On real data the upper clamp is the
+  binding constraint for most names.)
+- **Take-profit** = `entry + 3.0 × risk_distance`
+  (`take_profit_r_multiple = 3.0`, range 1–10), then **capped at a reward
+  ceiling** = `min(` volatility/horizon limit `z·ATR·√horizon` with
+  `reward_ceiling_z = 2.5`, a trusted fair value *(only if
+  `reward_ceiling_use_fair_value` is on — default OFF)*, a measured-move limit
+  `)`. In practice the 3R target governs and the ceiling rarely binds
+  (`reward_ceiling_basis` records which limit applied).
+- **`levels_state`** = `ok` when `0 < stop_loss < entry < take_profit` within
+  bounds; **`insufficient_data`** (stop & target = null) when ATR / SMA-200 /
+  swing-low are missing — never a degenerate number. Each candidate carries a
+  zero-directive **`rationale`** naming the stop rule and the binding ceiling.
+
+## Fair value (feature 011, displayed per candidate)
+
+A free, point-in-time **intrinsic-value estimate**, default basis the **Graham
+number** `sqrt(22.5 × EPS × BVPS)` (Graham, *The Intelligent Investor*, 1973 rev.,
+ch. 14) with EPS/BVPS back-derived from the EDGAR earnings/book yields the value
+strategy already computes (`fair_value_basis = "intrinsic_model"`; alternative
+`"valuation_yields"` = book value per share). It carries a **trust flag**:
+`trusted` / `unavailable` / `stale` / `out_of_range`, and a margin of safety vs
+close. **Coverage on momentum candidates is ~60% trusted** — momentum leaders
+near their highs are usually *expensive* vs Graham value (negative margin of
+safety), so treat fair value as **context, not a target**. It is **not** used to
+size momentum positions (see below) and is OFF as a take-profit ceiling.
+
+## Position sizing (feature 011 — risk-per-trade backbone)
+
+Sizing is no longer "fill the cap." It is **risk-per-trade**:
+`shares ≈ (f × capital) / (entry − stop_loss)` with `risk_per_trade_fraction
+f = 0.01` (risk 1% of capital to the stop), then **hard-bounded** by the
+per-position (10%) and per-sector (25%) caps — a suggestion never breaches a cap.
+A wider stop ⇒ a strictly smaller position. The result names its
+**`binding_constraint`** (`risk_target` / `position_cap` / `sector_cap`).
+A **conviction modulator** can scale this (`sizing_conviction_signal`), but the
+shipped default is **`none`**: a fair-value/margin-of-safety modulator was tested
+and rejected for momentum (it floored ~11 of 12 winners because they trade above
+Graham value). Sizing fails open — a missing modulator input never errors.
 
 ## Regime favorability
 
@@ -109,8 +152,15 @@ this. Treat "Trending down" signals with heavy skepticism.
 | `trend_sma_length` | 200 | 50–300 | Trend SMA for confirmation + exit |
 | `min_gp_assets_percentile` | 0.5 | 0–0.95 | Keep top fraction by gp/assets |
 | `max_asset_growth_percentile` | 0.5 | 0.05–1.0 | Keep bottom fraction by asset growth (1.0 disables) |
-| `take_profit_r_multiple` | 3.0 | 1–10 | Target as a multiple of risk |
+| `take_profit_r_multiple` | 3.0 | 1–10 | Target as a multiple of (clamped) risk |
 | `min_volume_ratio` | 0.7 | 0–5 | Recent vs 50-day volume floor (0 disables) |
 | `sector_strength_top_fraction` | 1.0 | 0–1 | Keep top fraction of sectors (1.0 = DISABLED) |
 | `stop_mode` | "trend" | trend/structure | Which stop is primary |
 | `structure_stop_buffer_atr` | 0.25 | 0–2 | ATRs below the 20-day low for the structure stop |
+| `risk_distance_atr_lo` | 1.0 | 0.5–2.0 | Lower clamp on risk distance, in ATRs (011) |
+| `risk_distance_atr_hi` | 4.0 | 2.0–6.0 | Upper clamp on risk distance, in ATRs (011) |
+| `reward_ceiling_z` | 2.5 | 1.5–4.0 | Vol/horizon take-profit ceiling `z·ATR·√horizon` (011) |
+| `reward_ceiling_use_fair_value` | false | bool | Also cap target at a trusted fair value (011) |
+| `risk_per_trade_fraction` | 0.01 | 0.0025–0.02 | Capital fraction risked to the stop = sizing backbone (011) |
+| `fair_value_basis` | intrinsic_model | intrinsic_model/valuation_yields | Fair-value model (Graham number vs book value/share) (011) |
+| `sizing_conviction_signal` | none | none/fair_value/inverse_vol/strategy_rank | Conviction modulator on sizing; default none (011) |

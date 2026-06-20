@@ -32,6 +32,16 @@ analysis. **Common to both strategies:** ticker, sector, as-of date, close, ATR,
 `gate_results` breakdown if you have it; plus your account size and
 risk-per-trade % if you want sizing.
 
+> **Feature 011:** the screener now also returns, per candidate, the **bounded
+> levels** (`stop_loss`, `take_profit`, `levels_state`, and a `rationale`), a
+> **fair value** + its **trust flag** (often `unavailable`/`out_of_range` for
+> momentum names near their highs — that's expected), and **risk-per-trade
+> sizing** with its `binding_constraint`. Paste these when you have them. The
+> advisor should treat the app's bounded levels as authoritative and only
+> *explain* them — the take-profit is a 3R/4R target **capped at a volatility
+> ceiling**, and sizing is `(risk% × capital) / (entry − stop)` hard-bounded by
+> the 10% position / 25% sector caps, not a "fill the cap" number.
+
 **Momentum (`midterm_52w_high_momentum`) also wants:**
 
 - **52-week high** (or `dist_to_high`), **return_12_1** (12-1 momentum)
@@ -63,13 +73,19 @@ Ticker: <TKR> (<sector>)
 close: <x>   52w_high: <x>   ATR: <x>   SMA200: <x>   20d_low: <x>
 debt_to_equity: <x>   fcf_ttm: <x>   gp_to_assets: <x>   asset_growth: <x>
 return_12_1: <x>   volume_ratio_recent: <x>
+fair_value: <x>   fair_value_trust_flag: <trusted/unavailable/stale/out_of_range>
+stop_loss: <x>   take_profit: <x>   levels_state: <ok/insufficient_data>   (if app-computed)
 gate_results: <paste if available>
 
-Account: $<x>, risk per trade: <x>%.
+Account: $<x>, risk per trade: <x>% (default 1%).
 
-Walk the gates in order, derive entry/stop/take-profit and reward:risk,
-give me a directive call with your confidence and the biggest risk, then the
-caveats. Stop mode: trend (default).
+Walk the gates in order. Use the app's bounded levels if I pasted them; else
+derive entry/stop/take-profit (risk clamped to 1–4×ATR, 3R target capped at the
+vol ceiling) and reward:risk. Size with risk-per-trade = (risk% × account) /
+(entry − stop), capped at 10% position / 25% sector — name the binding
+constraint. Treat fair value as context only (momentum names are usually above
+it). Give a directive call with confidence and the biggest risk, then caveats.
+Stop mode: trend (default).
 ```
 
 ## Template A-value — "Should I take this VALUE candidate?"
@@ -92,9 +108,12 @@ Account: $<x>, risk per trade: <x>%.
 Walk the gates in order (composite → cheapness cut → F-Score → leverage →
 momentum floor (only if min_momentum_12_1 > -1.0) → within-sector cap). Note
 that SMA200 is the STOP only, not an entry filter.
-Derive entry/stop/take-profit and reward:risk using the 4R target, give me a
-directive call with confidence and the biggest risk (especially value-trap
-risk and how solid the F-Score / composite coverage is), then the caveats.
+Use the app's bounded levels if pasted; else derive entry/stop/take-profit
+(risk clamped to 1–4×ATR, 4R target capped at the vol ceiling) and reward:risk.
+Size with risk-per-trade = (risk% × account) / (entry − stop), capped at 10%
+position / 25% sector. Give me a directive call with confidence and the biggest
+risk (especially value-trap risk and how solid the F-Score / composite coverage
+is), then the caveats.
 ```
 
 ## Template B — "Explain why this name matched / didn't"

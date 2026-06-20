@@ -57,7 +57,12 @@ back to neutral "analyst" framing and remove the directive permission.
 These files are a snapshot of the code. After any change to **either** strategy
 file, its parameters, modifications, or its backtest artifact, regenerate the
 affected file (`01`/`02` for momentum, `05`/`06` for value) so the advisor isn't
-reasoning from stale rules. The survivorship-bias caveat in
+reasoning from stale rules. **Cross-cutting mechanics shared by both strategies —
+the feature-011 bounded levels (`strategies/levels.py`), the fair-value estimate
+(`indicators/fair_value.py`), and risk-per-trade sizing (`portfolio/sizing.py`) —
+are documented once in `01` ("Fair value" / "Position sizing"), referenced from
+`05`, and caveated in `03` §10; re-sync those if the level/sizing/fair-value
+defaults change.** The survivorship-bias caveat in
 `03-honesty-and-limitations.md` stays until each backtest's `bias_check`
 actually passes (delisted tickers added) — for value, the backtest artifact may
 not exist yet, so its survivorship is *unconfirmed*, which is no better than
