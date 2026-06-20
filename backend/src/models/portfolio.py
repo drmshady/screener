@@ -85,6 +85,15 @@ class SizingRequest(BaseModel):
     total_capital: Decimal
     holdings: list[SizingHolding] = Field(default_factory=list)
     caps: PortfolioCaps = Field(default_factory=PortfolioCaps)
+    # Feature 011 (US3): risk-per-trade sizing needs the US2 stop; conviction
+    # modulation is optional and fails open when its input is untrusted/absent
+    # (contracts/sizing.md). Only one modulator is adopted by US4, but the
+    # inputs for each candidate signal are threaded through so any can be wired.
+    stop_loss: Decimal | None = None
+    fair_value: Decimal | None = None
+    fair_value_trust_flag: str | None = None
+    volatility: float | None = None
+    strategy_rank: int | None = None
 
     @field_validator("candidate_ticker")
     @classmethod
@@ -109,6 +118,14 @@ class SizingResponse(BaseModel):
     resulting_sector_pct_of_capital: float
     caps_respected: bool
     reasoning: str
+    # Feature 011 (US3): risk-per-trade backbone + conviction-modulation
+    # metadata (data-model.md "Sizing suggestion"). Optional/backward-compatible.
+    risk_per_trade_target: Decimal | None = None
+    risk_per_share: Decimal | None = None
+    conviction_signal: str | None = None  # "fair_value" | "inverse_vol" | "strategy_rank" | "none"
+    conviction_adjustment: str | None = None  # "none" | "boost" | "cap"
+    binding_constraint: str | None = None  # "risk_target" | "conviction" | "position_cap" | "sector_cap"
+    conviction_used: bool = False
     data_as_of: str = Field(default_factory=utc_now_iso)
     disclaimer: str = DISCLAIMER_TEXT
 

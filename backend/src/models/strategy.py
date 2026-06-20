@@ -22,6 +22,22 @@ class DataIntegrityWarning(BaseModel):
     reason: str
 
 
+class FairValueEstimate(BaseModel):
+    """Per-candidate fair-value estimate (feature 011 US3, contracts/fair-value.md).
+
+    Pure-function output, no I/O. ``trust_flag`` gates downstream use: only
+    ``trusted`` estimates may feed sizing conviction or the US2 reward ceiling —
+    ``unavailable``/``stale``/``out_of_range`` fail open (FR-016/018).
+    """
+
+    fair_value: Optional[float] = None
+    basis: str
+    source_as_of: str
+    provenance: str
+    trust_flag: str  # "trusted" | "unavailable" | "stale" | "out_of_range"
+    margin_of_safety: Optional[float] = None
+
+
 class StrategyParameter(BaseModel):
     default: Any
     min: Optional[Any] = None
@@ -96,6 +112,15 @@ class Candidate(BaseModel):
     stop_loss: str
     tighter_stop_loss: Optional[str] = None
     take_profit: str
+    # Feature 011 (US2): bounded-levels metadata from `derive_bounded_levels`.
+    # Optional/backward-compatible — existing entry/stop_loss/tighter_stop_loss/
+    # take_profit consumers keep working unchanged (contracts/risk-levels.md).
+    risk_distance: Optional[float] = None
+    reward_distance: Optional[float] = None
+    reward_ceiling_basis: Optional[str] = None
+    bounds_applied: List[str] = Field(default_factory=list)
+    levels_state: Optional[str] = None
+    rationale: Optional[str] = None
     rank: int
     score: float
     reason: str
@@ -182,6 +207,13 @@ class AnalyzeResponse(BaseModel):
     stop_loss: str
     tighter_stop_loss: Optional[str] = None
     take_profit: str
+    # Feature 011 (US2): bounded-levels metadata, mirrors Candidate above.
+    risk_distance: Optional[float] = None
+    reward_distance: Optional[float] = None
+    reward_ceiling_basis: Optional[str] = None
+    bounds_applied: List[str] = Field(default_factory=list)
+    levels_state: Optional[str] = None
+    rationale: Optional[str] = None
     return_12_1: Optional[float] = None
     vol_scalar: Optional[float] = None
     dist_to_high: Optional[float] = None

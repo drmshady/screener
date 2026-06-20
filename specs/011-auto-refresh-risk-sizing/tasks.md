@@ -36,9 +36,9 @@ repo root (`.github/workflows/`, `scripts/`, `tools/`).
 
 **Purpose**: Configuration plumbing and scaffolding all stories build on.
 
-- [ ] T001 [P] Add documented, env-overridable config readers in `backend/src/lib/flags.py` for the new level/sizing knobs — `risk_distance_atr_lo`, `risk_distance_atr_hi`, `reward_ceiling_z`, `reward_ceiling_use_fair_value` (bool), `risk_per_trade_fraction` (`f`) — each with a documented default + range comment, following the existing flag-reader idiom. Reuse the existing `take_profit_r_multiple`. Placeholder defaults (to be finalized by US4/T039).
-- [ ] T002 [P] Create the `tools/` directory with an empty `tools/__init__.py` and a `tools/README.md` stub describing the FR-019 method-comparison harness (filled in US4).
-- [ ] T003 [P] Create `.github/workflows/` directory and add a `.github/workflows/.gitkeep` (the daily-refresh workflow lands in US1/T009).
+- [X] T001 [P] Add documented, env-overridable config readers in `backend/src/lib/flags.py` for the new level/sizing knobs — `risk_distance_atr_lo`, `risk_distance_atr_hi`, `reward_ceiling_z`, `reward_ceiling_use_fair_value` (bool), `risk_per_trade_fraction` (`f`) — each with a documented default + range comment, following the existing flag-reader idiom. Reuse the existing `take_profit_r_multiple`. Placeholder defaults (to be finalized by US4/T035).
+- [X] T002 [P] Create the `tools/` directory with an empty `tools/__init__.py` and a `tools/README.md` stub describing the FR-019 method-comparison harness (filled in US4).
+- [X] T003 [P] Create `.github/workflows/` directory and add a `.github/workflows/.gitkeep` (the daily-refresh workflow lands in US1/T009).
 
 **Checkpoint**: Config knobs and target directories exist; no behavior changed yet.
 
@@ -51,10 +51,10 @@ US3 both depend on. **No user-story implementation may begin until this complete
 
 **⚠️ CRITICAL**: Blocks US2, US3, US4.
 
-- [ ] T004 Extend the level response model in `backend/src/models/strategy.py` with the new metadata fields from data-model.md — `risk_distance`, `reward_distance`, `reward_ceiling_basis` (enum), `bounds_applied` (list), `levels_state` (enum `ok`|`insufficient_data`), `rationale` (str) — all optional/backward-compatible so existing `entry`/`stop_loss`/`tighter_stop_loss`/`take_profit` consumers keep working.
-- [ ] T005 [P] Extend `SizingRequest`/`SizingResponse` in `backend/src/models/portfolio.py`: request gains `stop_loss` and the optional conviction inputs (`fair_value` + `trust_flag`, and/or the inverse-vol / strategy-rank inputs the adopted signal needs); response gains `risk_per_trade_target`, `risk_per_share`, `conviction_signal` (enum), `conviction_adjustment` (enum|null), `binding_constraint` (enum), `caps_respected` (bool), `conviction_used` (bool), `reasoning` (str) per data-model.md.
-- [ ] T006 [P] Add a `FairValueEstimate` shape (`fair_value`, `basis`, `source_as_of`, `provenance`, `trust_flag`, `margin_of_safety`) in `backend/src/models/strategy.py` (or `provenance.py`) per data-model.md, with the trust-flag enum (`trusted`|`unavailable`|`stale`|`out_of_range`).
-- [ ] T007 Create a shared, pure level-derivation helper module `backend/src/strategies/levels.py` exposing a `derive_bounded_levels(...)` function signature (no logic yet — raises/returns insufficient_data stub) so both `midterm_52w_high_momentum.derive_levels` and `midterm_value_composite.derive_levels` can delegate to one implementation in US2. Document the contract from `contracts/risk-levels.md` in the docstring.
+- [X] T004 Extend the level response model in `backend/src/models/strategy.py` with the new metadata fields from data-model.md — `risk_distance`, `reward_distance`, `reward_ceiling_basis` (enum), `bounds_applied` (list), `levels_state` (enum `ok`|`insufficient_data`), `rationale` (str) — all optional/backward-compatible so existing `entry`/`stop_loss`/`tighter_stop_loss`/`take_profit` consumers keep working.
+- [X] T005 [P] Extend `SizingRequest`/`SizingResponse` in `backend/src/models/portfolio.py`: request gains `stop_loss` and the optional conviction inputs (`fair_value` + `trust_flag`, and/or the inverse-vol / strategy-rank inputs the adopted signal needs); response gains `risk_per_trade_target`, `risk_per_share`, `conviction_signal` (enum), `conviction_adjustment` (enum|null), `binding_constraint` (enum), `caps_respected` (bool), `conviction_used` (bool), `reasoning` (str) per data-model.md.
+- [X] T006 [P] Add a `FairValueEstimate` shape (`fair_value`, `basis`, `source_as_of`, `provenance`, `trust_flag`, `margin_of_safety`) in `backend/src/models/strategy.py` (or `provenance.py`) per data-model.md, with the trust-flag enum (`trusted`|`unavailable`|`stale`|`out_of_range`).
+- [X] T007 Create a shared, pure level-derivation helper module `backend/src/strategies/levels.py` exposing a `derive_bounded_levels(...)` function signature (no logic yet — raises/returns insufficient_data stub) so both `midterm_52w_high_momentum.derive_levels` and `midterm_value_composite.derive_levels` can delegate to one implementation in US2. Document the contract from `contracts/risk-levels.md` in the docstring.
 
 **Checkpoint**: Models carry the new fields; the shared level helper seam exists. Stories can now proceed.
 
