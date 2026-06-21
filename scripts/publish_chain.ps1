@@ -36,6 +36,18 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# This script runs on BOTH local Windows PowerShell 5.1 and the CI Linux pwsh
+# runner. It checks $LASTEXITCODE after every native command rather than catching
+# exceptions, so opt out of pwsh 7.3+ turning nonzero native exits into throws
+# (assigning this is a harmless no-op on Windows PowerShell 5.1).
+$PSNativeCommandUseErrorActionPreference = $false
+
+# Cross-platform launchers: Windows uses the py launcher + powershell.exe; the
+# Linux CI runner uses python + pwsh. Detect once. (Guard the $IsWindows automatic
+# var, which does not exist under StrictMode on Windows PowerShell 5.1.)
+$IsWindowsHost = if ($PSVersionTable.PSEdition -eq 'Core') { [bool]$IsWindows } else { $true }
+$PsHostExe     = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $RepoRoot
 
@@ -49,9 +61,15 @@ function Run($exe, [string[]]$cmdArgs) {
     if ($LASTEXITCODE -ne 0) { Die "$exe exited $LASTEXITCODE" }
 }
 
+# Run a repo Python script with the right interpreter on each platform.
+function RunPy([string[]]$scriptArgs) {
+    if ($IsWindowsHost) { Run 'py' (@('-3.12') + $scriptArgs) }
+    else { Run 'python' $scriptArgs }
+}
+
 function Restore-PriorSnapshot([string]$ImageName) {
     Step 'Restore prior snapshot state (best effort)'
-    $dataDir = Join-Path $RepoRoot 'backend\data'
+    $dataDir = Join-Path $RepoRoot 'backend/data'
     if (-not (Test-Path -LiteralPath $dataDir)) {
         New-Item -ItemType Directory -Path $dataDir | Out-Null
     }
@@ -86,15 +104,23 @@ if ($SkipGuard) {
     Step 'New-session guard'
     $publishedManifest = Join-Path ([System.IO.Path]::GetTempPath()) 'screener-published-manifest.json'
     if (Test-Path -LiteralPath $publishedManifest) { Remove-Item -LiteralPath $publishedManifest -Force }
-    cmd /c "docker pull $Image`:latest >NUL 2>&1"
+    # Fetch the currently-published manifest from the live :latest image (byte-exact
+    # via docker cp, so no PowerShell re-encoding). Cross-platform: no cmd.exe.
+    & docker pull "$Image`:latest" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        cmd /c "docker run --rm $Image`:latest cat /app/backend/data/manifest.json > `"$publishedManifest`" 2>NUL"
+        $guardCid = & docker create "$Image`:latest" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $guardCid) {
+            $guardCid = ($guardCid | Select-Object -Last 1).ToString().Trim()
+            & docker cp "$guardCid`:/app/backend/data/manifest.json" $publishedManifest 2>$null | Out-Null
+            & docker rm $guardCid 2>$null | Out-Null
+        }
     }
-    $guardArgs = @('-3.12', 'scripts\_session_guard.py')
+    $guardScript = @('scripts/_session_guard.py')
     if (Test-Path -LiteralPath $publishedManifest) {
-        $guardArgs += @('--published-manifest', $publishedManifest)
+        $guardScript += @('--published-manifest', $publishedManifest)
     }
-    $guardOutput = & py @guardArgs
+    if ($IsWindowsHost) { $guardOutput = & py (@('-3.12') + $guardScript) }
+    else { $guardOutput = & python $guardScript }
     if ($LASTEXITCODE -ne 0) { Die 'session guard failed to run' }
     $outcome = ($guardOutput | Select-Object -Last 1).Trim()
     $guardOutput | Select-Object -SkipLast 1 | ForEach-Object { Write-Host $_ }
@@ -112,11 +138,11 @@ if ($SkipRefresh) {
     Restore-PriorSnapshot $Image
 
     Step 'Refresh universe'
-    Run 'py' @('-3.12', 'scripts\seed_universe.py')
+    RunPy @('scripts/seed_universe.py')
 
     if ($FullStooq) {
         Step 'Refresh full Stooq deep-history bundle (heavy; ~90-day cadence)'
-        Run 'py' @('-3.12', 'scripts\refresh_stooq_history.py')
+        RunPy @('scripts/refresh_stooq_history.py')
     } else {
         Write-Host 'Skipping full Stooq bundle (use -FullStooq ~quarterly). Incremental bars come from ingest_daily.'
     }
@@ -124,12 +150,12 @@ if ($SkipRefresh) {
     # NO --skip-events: earnings/8-K must refresh into catalog.db or the hosted
     # snapshot ships stale earnings badges (see deploy-010 gotchas).
     Step 'Incremental daily ingest (prices + events + Shariah + fundamentals)'
-    Run 'py' @('-3.12', 'scripts\ingest_daily.py')
+    RunPy @('scripts/ingest_daily.py')
 }
 
 # --- 2. Verify freshness ----------------------------------------------------
 Step 'Verify snapshot freshness (backend/data/manifest.json)'
-$manifestPath = Join-Path $RepoRoot 'backend\data\manifest.json'
+$manifestPath = Join-Path $RepoRoot 'backend/data/manifest.json'
 if (-not (Test-Path $manifestPath)) { Die "manifest.json not found at $manifestPath" }
 Write-Host "manifest.json last written: $((Get-Item $manifestPath).LastWriteTime)"
 Select-String -Path $manifestPath -Pattern 'data_as_of' |
@@ -138,15 +164,15 @@ Select-String -Path $manifestPath -Pattern 'data_as_of' |
 # --- 3. Data-integrity harness (008) ----------------------------------------
 Step 'Data-integrity harness'
 $asOf = Get-Date -Format 'yyyy-MM-dd'
-$harnessOut = Join-Path $RepoRoot 'backend\data\harness-report.md'
-Run 'py' @('-3.12', 'scripts\run_integrity_harness.py', '--as-of', $asOf, '--out', $harnessOut)
+$harnessOut = Join-Path $RepoRoot 'backend/data/harness-report.md'
+RunPy @('scripts/run_integrity_harness.py', '--as-of', $asOf, '--out', $harnessOut)
 
 # --- 4. Release secret scan (SC-008 / FR-002a/006) --------------------------
 if ($SkipSecretScan) {
     Step 'Secret scan SKIPPED (-SkipSecretScan)'
 } else {
     Step 'Release secret scan (repo + image copy list)'
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'secret_scan.ps1')
+    & $PsHostExe -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'secret_scan.ps1')
     if ($LASTEXITCODE -ne 0) { Die 'secret scan found potential secrets -- aborting before build.' }
 }
 
@@ -157,13 +183,13 @@ Step "Build image  $Image`:latest  (+ :$Tag)"
 if ($env:GITHUB_ACTIONS -eq 'true') {
     # Persist Docker layer cache across CI runs via the GitHub Actions cache backend.
     Run 'docker' @(
-        'buildx', 'build', '-f', 'backend\Dockerfile',
+        'buildx', 'build', '-f', 'backend/Dockerfile',
         '-t', "$Image`:latest", '-t', "$Image`:$Tag",
         '--cache-from', 'type=gha', '--cache-to', 'type=gha,mode=max',
         '--load', '.'
     )
 } else {
-    Run 'docker' @('build', '-f', 'backend\Dockerfile', '-t', "$Image`:latest", '-t', "$Image`:$Tag", '.')
+    Run 'docker' @('build', '-f', 'backend/Dockerfile', '-t', "$Image`:latest", '-t', "$Image`:$Tag", '.')
 }
 
 # --- 6. Push to GHCR ----------------------------------------------------------
