@@ -76,10 +76,12 @@ jobs:
           # Scheduled (cron) runs keep the new-session guard so non-trading days
           # are a documented no-op. A manual force_rebuild dispatch adds -SkipGuard
           # so a code-only deploy rebuilds even with no fresh session.
-          $chainArgs = @('-Image', $env:IMAGE, '-SpaceId', $env:SPACE_ID, '-Deploy')
+          # Hashtable splat (not array) so -SpaceId/-Deploy bind by name, matching
+          # scripts/publish.ps1's own delegation pattern.
+          $chainArgs = @{ Image = $env:IMAGE; SpaceId = $env:SPACE_ID; Deploy = $true }
           if ('${{ inputs.force_rebuild }}' -eq 'true') {
             Write-Host 'force_rebuild=true -> adding -SkipGuard (code-only deploy).'
-            $chainArgs += '-SkipGuard'
+            $chainArgs['SkipGuard'] = $true
           }
           ./scripts/publish_chain.ps1 @chainArgs
 
