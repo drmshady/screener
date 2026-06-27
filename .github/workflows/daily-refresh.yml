@@ -75,15 +75,14 @@ jobs:
         run: |
           # Scheduled (cron) runs keep the new-session guard so non-trading days
           # are a documented no-op. A manual force_rebuild dispatch adds -SkipGuard
-          # so a code-only deploy rebuilds even with no fresh session.
-          # Hashtable splat (not array) so -SpaceId/-Deploy bind by name, matching
-          # scripts/publish.ps1's own delegation pattern.
-          $chainArgs = @{ Image = $env:IMAGE; SpaceId = $env:SPACE_ID; Deploy = $true }
+          # so a code-only deploy rebuilds even with no fresh session. Explicit
+          # named args (no splat) to match the proven original invocation.
           if ('${{ inputs.force_rebuild }}' -eq 'true') {
             Write-Host 'force_rebuild=true -> adding -SkipGuard (code-only deploy).'
-            $chainArgs['SkipGuard'] = $true
+            ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy -SkipGuard
+          } else {
+            ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy
           }
-          ./scripts/publish_chain.ps1 @chainArgs
 
       # GitHub already emails repo watchers on a failed scheduled workflow run
       # by default; this step adds the failing-step detail to the run summary
