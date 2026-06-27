@@ -284,6 +284,7 @@ def _candidate_block(result: AnalyzeResponse, *, regime_as_of: str | None = None
     if rr is not None:
         lines.append(f"- Reward:risk = {rr}")
     lines.extend(_diagnostics_lines(result))
+    lines.extend(_entry_timing_lines(result))
     lines.extend(_skipped_gate_lines(result))
     return "\n".join(lines)
 
@@ -301,6 +302,60 @@ def _skipped_gate_lines(obj) -> list[str]:
         "- Skipped preferred gates (expanded coverage — retained and demoted below "
         "all clean names, NOT a pass): " + items
     ]
+
+
+def _entry_timing_lines(obj) -> list[str]:
+    """Feature 012 US1 (FR-023): carry the momentum entry-timing overlay into the
+    prompt as an objective technical STATE — never a directive. Present only when
+    the candidate has an `entry_timing` classification (momentum-only; absent for
+    value / default-off, so other payloads are unchanged). Every rule is attributed
+    to its source (Minervini 2013 base/pivot/breakout; Faber 2007 SMA-200
+    extension). Mirrors Claude-Project custom-instruction rule #8."""
+    et = getattr(obj, "entry_timing", None)
+    if et is None:
+        return []
+    state_label = et.state.replace("_", "-").upper()
+    lines = [
+        "- Entry-timing (momentum technical STATE, not a directive — Minervini 2013 "
+        f"base/pivot/breakout, Faber 2007 SMA-200 extension): {state_label} — {et.summary}",
+    ]
+    comps = "; ".join(f"{c.name}={c.status.upper()} ({c.reason})" for c in et.components)
+    if comps:
+        lines.append("  - Components: " + comps)
+    triggered = [d for d in et.disqualifiers if d.triggered]
+    if triggered:
+        bits = []
+        for d in triggered:
+            suffix = (
+                " [forces not-entry-ready]"
+                if d.forces_not_entry_ready
+                else " — describes risk, not a directive"
+            )
+            bits.append(f"{d.name} ({d.reason}){suffix}")
+        lines.append("  - Disqualifiers: " + "; ".join(bits))
+    d = et.diagnostics
+    diag: list[str] = []
+    if d.base_type and d.base_type != "none":
+        diag.append(f"base {d.base_type}")
+    if d.base_length_weeks is not None:
+        diag.append(f"length {d.base_length_weeks:.0f}w")
+    if d.base_depth is not None:
+        diag.append(f"depth {d.base_depth:.0%}")
+    if d.pivot is not None:
+        diag.append(f"pivot {d.pivot:.2f}")
+    if d.breakout_volume_ratio is not None:
+        diag.append(f"breakout vol {d.breakout_volume_ratio:.2f}x")
+    if d.dist_above_pivot is not None:
+        diag.append(f"vs pivot {d.dist_above_pivot:+.0%}")
+    if d.dist_above_sma_200 is not None:
+        diag.append(f"vs SMA-200 {d.dist_above_sma_200:+.0%}")
+    if diag:
+        lines.append("  - Base/pivot diagnostics: " + ", ".join(diag))
+    if et.state == "entry_undetermined":
+        lines.append(
+            "  - Note: entry-undetermined = missing/unclassifiable data, not a weak setup."
+        )
+    return lines
 
 
 def _gate_breakdown(result: AnalyzeResponse) -> str:
@@ -416,9 +471,44 @@ def build_advisor_prompt(
 # ---------------------------------------------------------------------------
 
 
+def _research_and_summary_instruction(directive: bool, *, multi: bool) -> str:
+    """Appended research + presentation instructions (owner request): web-search
+    news + analyst opinion, optionally compare across names, and close with a brief
+    Arabic summary of the strongest candidates. News/analyst material is external
+    context that NEVER overwrites a computed gate (Claude-Project rule #9). The
+    'strongest' framing stays neutral when directive guidance is off (hosted mode
+    forces it off and non-waivable)."""
+    best = (
+        "rank the strongest candidates best-to-worst to act on now"
+        if directive
+        else "highlight the strongest screen matches for further research"
+    )
+    parts = [
+        "ADDITIONAL RESEARCH (use web search; cite and DATE every source):",
+        "(1) Search recent NEWS that could affect each stock over the 60-180 day horizon "
+        "(earnings, guidance, M&A, regulatory, sector catalysts) and surface post-catalyst "
+        "'news-exhaustion' pullback risk. News informs the RISK NARRATIVE only — it must never "
+        "overwrite a computed gate result, and never read prices/fundamentals out of an article "
+        "as if they were the screener's numbers.",
+        "(2) Search current ANALYST opinion (ratings, price targets, recent revisions) and treat "
+        "it as external opinion, clearly separate from the screener's own output.",
+    ]
+    if multi:
+        parts.append(
+            "(3) COMPARE the candidates against one another on setup quality, entry-timing state, "
+            "reward:risk, and the news/analyst picture."
+        )
+    parts.append(
+        "FINALLY, end with a BRIEF summary in ARABIC (فقرة موجزة بالعربية) that "
+        f"{best}, one short reason each. Keep every citation and the honesty caveats "
+        "(survivorship + data-tier) intact."
+    )
+    return "\n".join(parts)
+
+
 def _batch_task_instruction(directive: bool, n: int) -> str:
     if directive:
-        return (
+        base = (
             "TASK (personal-use, single-user — directive guidance permitted): You are an "
             f"expert advisor for the strategy below. {n} candidate(s) passed the screen. For "
             "each, walk its gates and give a concise directive call (take / pass / size) with "
@@ -427,13 +517,15 @@ def _batch_task_instruction(directive: bool, n: int) -> str:
             "compute or invent figures. End with the honesty caveats. This guidance is for the "
             "single owner of this tool only and must not be redistributed."
         )
-    return (
-        "TASK: You are an expert analyst for the strategy below. "
-        f"{n} candidate(s) passed the screen. For each, explain neutrally how it scores against "
-        "the strategy's rules, then compare them as screen matches / candidates for further "
-        "research (not recommendations). Use only the numbers provided here — do not compute or "
-        "invent figures. End with the honesty caveats."
-    )
+    else:
+        base = (
+            "TASK: You are an expert analyst for the strategy below. "
+            f"{n} candidate(s) passed the screen. For each, explain neutrally how it scores against "
+            "the strategy's rules, then compare them as screen matches / candidates for further "
+            "research (not recommendations). Use only the numbers provided here — do not compute or "
+            "invent figures. End with the honesty caveats."
+        )
+    return base + "\n\n" + _research_and_summary_instruction(directive, multi=True)
 
 
 def _candidate_summary_block(
@@ -472,6 +564,7 @@ def _candidate_summary_block(
         for w in c.data_integrity_warnings:
             lines.append(f"### DATA INTEGRITY WARNING: {w.reason}")
     lines.extend(_diagnostics_lines(c))
+    lines.extend(_entry_timing_lines(c))
     lines.extend(_skipped_gate_lines(c))
     gate_bits = []
     for g in c.gate_results:
