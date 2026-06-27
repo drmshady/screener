@@ -13,7 +13,12 @@ on:
     # 22:00 UTC settle buffer (market_calendar.latest_completed_trading_day)
     # means this run always sees a session that buffer has already cleared.
     - cron: "0 23 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Rebuild & redeploy even with no new trading session (code-only deploy). Passes -SkipGuard."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -68,7 +73,15 @@ jobs:
           HALAL_TERMINAL_API_KEY: ${{ secrets.HALAL_TERMINAL_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy
+          # Scheduled (cron) runs keep the new-session guard so non-trading days
+          # are a documented no-op. A manual force_rebuild dispatch adds -SkipGuard
+          # so a code-only deploy rebuilds even with no fresh session.
+          $chainArgs = @('-Image', $env:IMAGE, '-SpaceId', $env:SPACE_ID, '-Deploy')
+          if ('${{ inputs.force_rebuild }}' -eq 'true') {
+            Write-Host 'force_rebuild=true -> adding -SkipGuard (code-only deploy).'
+            $chainArgs += '-SkipGuard'
+          }
+          ./scripts/publish_chain.ps1 @chainArgs
 
       # GitHub already emails repo watchers on a failed scheduled workflow run
       # by default; this step adds the failing-step detail to the run summary
