@@ -111,6 +111,28 @@ def market_regime(
     }
 
 
+def benchmark_momentum_12_1(as_of_date: str | None = None) -> float | None:
+    """SPY 12-1 month momentum (skip the most recent ~month), or None when SPY
+    history is unavailable. Mirrors the per-candidate ``return_12_1`` computation
+    so the relative-strength gate compares like-for-like (feature 012 US2). Pure
+    given the SPY snapshot → deterministic; fails open (None) for the gate to skip.
+    """
+    spy, _ = _load_spy(as_of_date, 252)
+    if spy is None or spy.empty:
+        return None
+    df = spy.copy()
+    df["as_of_date"] = pd.to_datetime(df["as_of_date"])
+    if as_of_date:
+        df = df[df["as_of_date"] <= pd.Timestamp(as_of_date)]
+    close = df.sort_values("as_of_date")["close"].astype(float)
+    if len(close) <= 252 or close.iloc[-253] == 0:
+        return None
+    try:
+        return float(close.iloc[-22] / close.iloc[-253] - 1.0)
+    except (IndexError, ZeroDivisionError, ValueError):
+        return None
+
+
 def strategy_is_regime_sensitive(regime_favorability: dict[str, str]) -> bool:
     """A strategy opts into the master switch by marking downtrends Unfavorable."""
     return regime_favorability.get("Trending down") == "Unfavorable"

@@ -88,3 +88,44 @@ Much of individual-stock momentum is actually industry momentum; the
 also leading. The gate keeps names only in sectors with strong breadth (members
 above their 200-day SMA). **Off by default** (`sector_strength_top_fraction =
 1.0`) pending a better industry-momentum metric — note this when it comes up.
+
+## Modification 9 — Entry-timing overlay (feature 012, MOMENTUM-ONLY, default-off diagnostic)
+
+**Minervini, M. (2013). *Trade Like a Stock Market Wizard*. McGraw-Hill** (base /
+pivot / volume-confirmed-breakout structure). The "extended from the 200-day"
+caution echoes **Faber (2007)** (already Modification 6). This is a **diagnostic
+overlay, NOT a strategy and explicitly NOT CAN SLIM / O'Neil** — it changes no
+gate, threshold, ranking, or citation; it only annotates each already-surfaced
+momentum candidate with an objective *technical-state* classification.
+
+It attaches **only** to `midterm_52w_high_momentum` (never value, never the
+short-term strategies) and labels each candidate **entry-ready /
+not-entry-ready / entry-undetermined** from six pass/fail/undetermined
+components plus disqualifiers:
+
+- **pivot_proximity** — within `entry_pivot_max_extension` (default **5%**) above
+  the detected pivot; *below* the pivot → undetermined.
+- **trend** — close above the 200-day SMA (Faber).
+- **volume_confirmation** — breakout volume ratio ≥ `entry_volume_ratio_min`
+  (default **1.4×**; ≥ **1.5×** reads as "strong").
+- **base_maturity** — base ≥ `entry_flat_base_min_weeks` (**5w**, flat) /
+  `entry_cup_base_min_weeks` (**7w**, cup) long.
+- **base_depth** — base depth ≤ `entry_base_depth_max` (**33%**).
+- **not_extended** — distance above the 200-day SMA ≤ `entry_sma200_extension_max`
+  (**40%**).
+
+Plus **disqualifiers**: **climax-top exhaustion** (a ≥ `entry_climax_advance_min`
+**25%** trailing advance after a ≥ **8-week** prior trend) and **huge-gap
+breakout** (gap > `entry_huge_gap_threshold` **5%** above pivot) both **force
+not-entry-ready**; a **recent short-lived catalyst** attaches a non-directive
+"elevated post-catalyst pullback risk" ("sell-the-news") caution that **does not**
+force a state. Overall state = **not-entry-ready** if any component fails or a
+forcing disqualifier triggers; **entry-undetermined** if any component is
+undetermined (missing/unclassifiable data — never a false entry-ready);
+**entry-ready** only when all six pass and nothing forces otherwise.
+
+The base/pivot come from an explicit golden-fixture-tested geometric classifier
+(`indicators/base_pattern.py`: flat / cup / cup-with-handle / double-bottom).
+Unclassifiable patterns yield **entry-undetermined**, never a fabricated pivot.
+Every label is neutral and **zero-directive** ("near pivot", "extended",
+"immature base") — present it as a *state*, not a buy/sell instruction.

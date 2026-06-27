@@ -56,6 +56,52 @@ warn-and-rank instead of excluding — assume **hard mode** unless told otherwis
 8. **Apply gross-profitability pass** (from step 1).
 9. **Apply low-asset-growth pass** (from step 2).
 
+## Entry-timing overlay (feature 012 — MOMENTUM ONLY, default OFF)
+
+A neutral, mechanically-defined **diagnostic** layered on top of the screen —
+it changes **no gate, threshold, ranking, or citation** (see Modification 9 in
+`02-modifications-and-citations.md` for the components, thresholds, and Minervini
+(2013) source). Each surfaced momentum candidate is classified:
+
+- **entry-ready** — all six components pass, no forcing disqualifier.
+- **not-entry-ready** — at least one component fails, or a forcing disqualifier
+  (climax-top / huge-gap) triggered.
+- **entry-undetermined** — a component is undetermined because data was missing
+  or the base was unclassifiable. **It is never a false "entry-ready."**
+
+Two opt-in screen parameters (both default **OFF** ⇒ baseline screen is
+byte-identical):
+
+- **`entry_ready_only`** — narrows the surfaced list to entry-ready names only.
+- **`expanded_coverage`** — turns on the three-tier gate classification below
+  (preferred gates demote-not-exclude) AND surfaces the relative-strength
+  preferred confirmation.
+
+A candidate carrying a **short-lived-catalyst** flag gets a non-directive
+"elevated post-catalyst pullback risk" caution (it does **not** force a state —
+it is a prompt to **check the news**, see `04-workflow-and-prompts.md`).
+
+## Three-tier gate classification & expanded coverage (feature 012)
+
+`screening/gate_tiers.py` declares, per gate, one of three tiers. This only
+changes *whether a non-pass on a non-essential gate excludes* — **no threshold
+moves**:
+
+- **essential** (fail → exclude, always): **liquidity**, **data integrity**
+  (feature 008), **52-week-high proximity**.
+- **preferred** (non-pass → retained, marked `skipped`, **demoted below all
+  clean names** when `expanded_coverage` is on; excluded in default hard mode):
+  **market regime**, **sector strength**, **relative strength**.
+- **disqualifier** (positive detection → hard-exclude / force not-entry-ready,
+  always): **climax-top exhaustion**, **huge-gap breakout**.
+
+**Relative strength** is a *new* preferred soft confirmation (feature 012):
+the name's 12-1 momentum vs **SPY's** 12-1 momentum, appended only when expanded
+coverage is active; **fails open to `skipped`** when the benchmark or the name's
+momentum is unavailable. A `skipped` preferred gate under expanded coverage is
+**not a pass** — it means the name was kept *despite* not clearing that gate, and
+sorted below every clean name.
+
 ## Scoring & ranking (survivors of the gates)
 
 - **Volatility scalar** — exposure is scaled by trailing realized volatility
@@ -164,3 +210,11 @@ this. Treat "Trending down" signals with heavy skepticism.
 | `risk_per_trade_fraction` | 0.01 | 0.0025–0.02 | Capital fraction risked to the stop = sizing backbone (011) |
 | `fair_value_basis` | intrinsic_model | intrinsic_model/valuation_yields | Fair-value model (Graham number vs book value/share) (011) |
 | `sizing_conviction_signal` | none | none/fair_value/inverse_vol/strategy_rank | Conviction modulator on sizing; default none (011) |
+| `entry_ready_only` | false | bool | Surface only entry-ready momentum names (012) |
+| `expanded_coverage` | false | bool | Three-tier gates: preferred non-pass demotes instead of excludes + adds relative strength (012) |
+| `entry_pivot_max_extension` | 0.05 | — | Max distance above the detected pivot to read as "near pivot" (012) |
+| `entry_volume_ratio_min` | 1.4 | — | Breakout volume ratio floor for volume confirmation (012) |
+| `entry_base_depth_max` | 0.33 | — | Max base depth for the base-depth component (012) |
+| `entry_sma200_extension_max` | 0.40 | — | Max distance above SMA-200 before "extended" (012) |
+| `entry_climax_advance_min` | 0.25 | — | Trailing advance that, after an ≥8-week trend, triggers the climax-top disqualifier (012) |
+| `entry_huge_gap_threshold` | 0.05 | — | Gap above pivot that triggers the huge-gap disqualifier (012) |

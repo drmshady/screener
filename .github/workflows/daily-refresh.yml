@@ -62,6 +62,10 @@ jobs:
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SCREENER_INDEPENDENT_QUOTE_API_KEY: ${{ secrets.SCREENER_INDEPENDENT_QUOTE_API_KEY }}
+          # Without this the halal_terminal Shariah source silently never refreshes
+          # (ingest_daily catches the missing-key error), so the compliant universe
+          # bakes stale behind fresh prices. Add HALAL_TERMINAL_API_KEY as a repo secret.
+          HALAL_TERMINAL_API_KEY: ${{ secrets.HALAL_TERMINAL_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy

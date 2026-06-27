@@ -19,6 +19,7 @@ from ..data.universe import UniverseLoader
 from ..data.market_calendar import drop_market_weekends, market_of, trading_days_between
 from ..events.service import EventsService, TickerEventsSnapshot
 from ..indicators.fair_value import estimate_fair_value
+from ..indicators.base_pattern import classify_base
 from ..indicators.seam_adjust import apply_seam_adjustment, calculate_seam_factor
 from ..indicators.piotroski import f_score_from_mapping
 from ..indicators.valuation import (
@@ -29,7 +30,9 @@ from ..indicators.valuation import (
 )
 from ..lib import flags
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
-from ..models.strategy import Candidate, DataIntegrityWarning, ScreenResult
+from ..models.strategy import Candidate, DataIntegrityWarning, ScreenResult, SkippedGate
+from .entry_timing import EntryThresholds, classify_entry_timing
+from .gate_tiers import gate_tier
 from .integrity.engine import evaluate_contract
 from .regime import market_regime, strategy_is_regime_sensitive
 from ..shariah.lookup import ShariahLookup, normalize_shariah_overrides
@@ -72,7 +75,8 @@ _STOOQ_SNAPSHOT_CACHE_VERSION = (
     # fair_value_trust_flag, fair_value_margin_of_safety, value_metrics_period_end)
     # added in _compute_snapshot_rows — bump invalidates pre-011 cached snapshots
     # that lack them (else fair value is silently absent / 0% coverage downstream).
-    "v6"
+    # v7: feature 012 entry-timing base/pivot scalar columns.
+    "v7"
 )
 _SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[datetime, pd.DataFrame, str]] = {}
 _STOOQ_SNAPSHOT_CACHE: dict[tuple[Any, ...], tuple[datetime, pd.DataFrame, str]] = {}
@@ -546,6 +550,37 @@ def _compute_snapshot_rows(
             and avg_volume_50 > 0
             else None
         )
+        base = classify_base(
+            high,
+            low,
+            adj_close,
+            flat_min_weeks=flags.entry_flat_base_min_weeks(),
+            cup_min_weeks=flags.entry_cup_base_min_weeks(),
+            max_depth=flags.entry_base_depth_max(),
+        )
+        pivot = base.pivot if base.detected else None
+        close_latest = float(close.iloc[-1])
+        dist_above_pivot = (
+            float((close_latest - pivot) / pivot)
+            if pivot is not None and pivot > 0
+            else None
+        )
+        dist_above_sma_200 = (
+            float((close_latest - float(sma_200)) / float(sma_200))
+            if sma_200 is not None and pd.notna(sma_200) and float(sma_200) > 0
+            else None
+        )
+        trailing = close.tail(15)
+        climax_advance = (
+            float((trailing.iloc[-1] - trailing.min()) / trailing.min())
+            if len(trailing) >= 5 and trailing.min() > 0
+            else None
+        )
+        prior_trend_weeks = (
+            float((close.tail(40) > float(sma_200)).sum() / 5.0)
+            if sma_200 is not None and pd.notna(sma_200)
+            else 0.0
+        )
         daily_range = (high / low) - 1.0
         recent_adr = daily_range.tail(20).mean() if len(daily_range) >= 20 else None
         prior_adr = daily_range.iloc[-40:-20].mean() if len(daily_range) >= 40 else None
@@ -614,6 +649,17 @@ def _compute_snapshot_rows(
                 ),
                 "volume_ratio_50": volume_ratio_50,
                 "volume_ratio_recent": volume_ratio_recent,
+                "base_type": base.base_type,
+                "pivot": pivot,
+                "handle_high": base.handle_high,
+                "base_length_weeks": base.base_length_weeks,
+                "base_depth": base.base_depth,
+                "breakout_volume_ratio": volume_ratio_50,
+                "dist_above_pivot": dist_above_pivot,
+                "dist_above_sma_200": dist_above_sma_200,
+                "climax_advance": climax_advance,
+                "prior_trend_weeks": prior_trend_weeks,
+                "gap_above_pivot": dist_above_pivot,
                 "chandelier_exit": chandelier_exit,
                 "daily_returns": close.pct_change().dropna().tail(126),
                 # §8 Signals
@@ -1065,6 +1111,36 @@ def refresh_reference_thresholds(as_of_date: str | None = None) -> dict:
     )
 
 
+def _skipped_gates_for_row(strategy_slug: str, row: Any) -> list[SkippedGate]:
+    """Feature 012 US2: the preferred gates this candidate did not pass but was
+    retained on under expanded coverage (FR-010/014). Sourced from the strategy's
+    soft-gate ``warnings`` (the gates that demote rather than exclude) paired with
+    their per-candidate ``gate_results`` detail. Essential gates are filtered out
+    so an essential failure is never mislabelled a skippable preferred gate
+    (FR-011). Empty in default hard mode (no warnings) → omitted from the payload."""
+    warned = list(getattr(row, "warnings", None) or [])
+    if not warned:
+        return []
+    gate_results = getattr(row, "gate_results", None) or []
+    detail_by_gate: dict[str, str] = {}
+    for gate in gate_results:
+        name = gate.get("gate") if isinstance(gate, dict) else getattr(gate, "gate", None)
+        detail = gate.get("detail") if isinstance(gate, dict) else getattr(gate, "detail", None)
+        if name is not None:
+            detail_by_gate[str(name)] = str(detail or "")
+    out: list[SkippedGate] = []
+    for gate_name in warned:
+        if gate_tier(strategy_slug, str(gate_name)) == "essential":
+            continue
+        out.append(
+            SkippedGate(
+                gate=str(gate_name),
+                reason=detail_by_gate.get(str(gate_name), "preferred gate not satisfied"),
+            )
+        )
+    return out
+
+
 def _opt_float(value: Any) -> float | None:
     """Coerce a DataFrame cell to a plain float, or None when missing/NaN."""
     if value is None or pd.isna(value):
@@ -1247,6 +1323,20 @@ def _screen_from_universe(
     assemble the ScreenResult: regime gate, per-run toggles, events/earnings,
     Shariah filtering, candidate rows. Split out of run_strategy so the matrix
     runner can reuse one snapshot across four variants (T003)."""
+    def _entry_thresholds() -> EntryThresholds:
+        return EntryThresholds(
+            pivot_max_extension=flags.entry_pivot_max_extension(),
+            volume_ratio_min=flags.entry_volume_ratio_min(),
+            volume_ratio_preferred=flags.entry_volume_ratio_preferred(),
+            flat_min_weeks=flags.entry_flat_base_min_weeks(),
+            cup_min_weeks=flags.entry_cup_base_min_weeks(),
+            base_depth_max=flags.entry_base_depth_max(),
+            sma200_extension_max=flags.entry_sma200_extension_max(),
+            climax_advance_min=flags.entry_climax_advance_min(),
+            climax_prior_trend_weeks=flags.entry_climax_prior_trend_weeks(),
+            huge_gap_threshold=flags.entry_huge_gap_threshold(),
+        )
+
     # Regime master switch (Faber 2007 / T108a): for strategies that mark
     # downtrends Unfavorable, take no NEW entries while SPY is below its 200-day
     # SMA. Enabled by default; pass parameters.regime_gate=false to disable.
@@ -1316,12 +1406,47 @@ def _screen_from_universe(
         # 12-1 momentum floor to the value strategy via attrs (<= -1.0 = off).
         if parameters_snapshot.get("min_momentum_12_1") is not None:
             universe.attrs["min_momentum_12_1"] = parameters_snapshot["min_momentum_12_1"]
+        # Feature 012 US2: expanded candidate coverage (momentum only). When ON,
+        # forward the toggle to rules() via attrs so preferred gates demote-not-
+        # exclude, and supply the SPY benchmark momentum for the relative-strength
+        # preferred confirmation. Default OFF leaves the universe attrs untouched so
+        # the screen stays byte-identical to today's hard-mode output (SC-009).
+        expanded_coverage = (
+            strategy_slug == "midterm_52w_high_momentum"
+            and (
+                bool(parameters_snapshot.get("expanded_coverage", False))
+                or flags.expanded_coverage()
+            )
+        )
+        if expanded_coverage:
+            universe.attrs["expanded_coverage"] = True
+            try:
+                from .regime import benchmark_momentum_12_1
+
+                benchmark = benchmark_momentum_12_1(as_of_date)
+            except Exception:
+                benchmark = None
+            if benchmark is not None:
+                universe.attrs["benchmark_return_12_1"] = benchmark
         results = strategy.rules(universe)
         data_notes.extend(results.attrs.get("gates_skipped", []))
         # Feature 008 (T013): validate every returned candidate against the
         # strategy's declared output contract — deterministic, no network
         # (FR-002/FR-024). Flagged names are annotated + demoted, never dropped.
         results = _apply_output_contract(strategy, results, data_notes)
+        if strategy_slug == "midterm_52w_high_momentum" and not results.empty:
+            thresholds = _entry_thresholds()
+            results = results.copy()
+            results["entry_timing"] = [
+                classify_entry_timing(row, thresholds=thresholds)
+                for row in results.to_dict(orient="records")
+            ]
+            if bool(parameters_snapshot.get("entry_ready_only", False)):
+                results = results[
+                    results["entry_timing"].map(
+                        lambda entry: entry.state == "entry_ready"
+                    )
+                ].copy()
         if not results.empty and {"score", "ticker"}.issubset(results.columns):
             # Sort key (FR-018): data-suspect names sink below ALL clean names
             # regardless of raw score; then tiered cleanliness (fewest soft
@@ -1492,6 +1617,12 @@ def _screen_from_universe(
                 ),
                 gate_results=getattr(row, "gate_results", None) or [],
                 warnings=list(getattr(row, "warnings", None) or []),
+                # Feature 012 US2: preferred gates this candidate did not pass but
+                # was retained on (expanded coverage). Built from the soft-gate
+                # warnings + their gate detail; essential gates are never recorded
+                # here (FR-011/014). Empty (and omitted) in default hard mode.
+                skipped_gates=_skipped_gates_for_row(strategy_slug, row),
+                entry_timing=getattr(row, "entry_timing", None),
                 # Feature 008: candidate-severity contract violations (FR-017).
                 data_integrity_warnings=[
                     DataIntegrityWarning(

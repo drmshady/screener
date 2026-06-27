@@ -62,7 +62,13 @@ the feature-011 bounded levels (`strategies/levels.py`), the fair-value estimate
 (`indicators/fair_value.py`), and risk-per-trade sizing (`portfolio/sizing.py`) —
 are documented once in `01` ("Fair value" / "Position sizing"), referenced from
 `05`, and caveated in `03` §10; re-sync those if the level/sizing/fair-value
-defaults change.** The survivorship-bias caveat in
+defaults change.** The **feature-012 momentum entry-timing overlay** (Modification
+9 in `02`, the "Entry-timing overlay" + "Three-tier gate classification" sections
+in `01`, caveated in `03` §11) and the **news-search workflow** (`04` "Search the
+news" + Custom-Instructions rules 8–9) are **momentum-only**; re-sync them from
+`screening/entry_timing.py`, `screening/gate_tiers.py`,
+`indicators/base_pattern.py`, and the `entry_*` knobs in `lib/flags.py` if those
+thresholds or tiers change. The survivorship-bias caveat in
 `03-honesty-and-limitations.md` stays until each backtest's `bias_check`
 actually passes (delisted tickers added) — for value, the backtest artifact may
 not exist yet, so its survivorship is *unconfirmed*, which is no better than

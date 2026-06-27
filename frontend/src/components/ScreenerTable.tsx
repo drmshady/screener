@@ -25,6 +25,7 @@ export function ScreenerTable({ candidates }: { candidates: Candidate[] }) {
             <th scope="col" className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900">{COPY.ACTION.ENTRY_SUGGESTED}</th>
             <th scope="col" className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900">{COPY.ACTION.STOP_LOSS}</th>
             <th scope="col" className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900">{COPY.ACTION.TAKE_PROFIT}</th>
+            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Entry timing</th>
             <th scope="col" className="px-3 py-3.5 text-right text-sm font-semibold text-gray-900">Score</th>
           </tr>
         </thead>
@@ -36,6 +37,18 @@ export function ScreenerTable({ candidates }: { candidates: Candidate[] }) {
               <td className="whitespace-nowrap px-3 py-4 text-sm text-right text-gray-500">${Number(c.entry).toFixed(2)}</td>
               <td className="whitespace-nowrap px-3 py-4 text-sm text-right text-gray-500">${Number(c.stop_loss).toFixed(2)}</td>
               <td className="whitespace-nowrap px-3 py-4 text-sm text-right text-gray-500">${Number(c.take_profit).toFixed(2)}</td>
+              <td className="px-3 py-4 text-sm text-gray-500">
+                {c.entry_timing ? (
+                  <div>
+                    <div className="font-medium text-gray-800">{c.entry_timing.summary}</div>
+                    <div className="text-xs text-gray-500">
+                      {c.entry_timing.state.replaceAll('_', ' ')}
+                    </div>
+                  </div>
+                ) : (
+                  '-'
+                )}
+              </td>
               <td className="whitespace-nowrap px-3 py-4 text-sm text-right text-gray-500">{c.score.toFixed(2)}</td>
             </tr>
           ))}

@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, computed_field
 import pandas as pd
 
@@ -100,6 +100,53 @@ class GateResult(BaseModel):
     detail: str
 
 
+class EntryComponent(BaseModel):
+    name: Literal[
+        "pivot_proximity",
+        "trend",
+        "volume_confirmation",
+        "base_maturity",
+        "base_depth",
+        "not_extended",
+    ]
+    status: Literal["pass", "fail", "undetermined"]
+    value: float | None = None
+    reason: str
+
+
+class Disqualifier(BaseModel):
+    name: Literal["climax_top", "huge_gap", "short_lived_catalyst"]
+    triggered: bool
+    value: float | None = None
+    reason: str
+    forces_not_entry_ready: bool
+
+
+class EntryDiagnostics(BaseModel):
+    pivot: float | None = None
+    base_type: (
+        Literal["flat", "cup", "cup_with_handle", "double_bottom", "none"] | None
+    ) = None
+    base_length_weeks: float | None = None
+    base_depth: float | None = None
+    breakout_volume_ratio: float | None = None
+    dist_above_pivot: float | None = None
+    dist_above_sma_200: float | None = None
+
+
+class EntryTimingClassification(BaseModel):
+    state: Literal["entry_ready", "not_entry_ready", "entry_undetermined"]
+    components: list[EntryComponent]
+    disqualifiers: list[Disqualifier] = Field(default_factory=list)
+    diagnostics: EntryDiagnostics
+    summary: str
+
+
+class SkippedGate(BaseModel):
+    gate: str
+    reason: str
+
+
 class Candidate(BaseModel):
     ticker: str
     name: str
@@ -151,6 +198,15 @@ class Candidate(BaseModel):
     fair_value_margin_of_safety: Optional[float] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    # Feature 012: additive entry-timing diagnostics and opt-in expanded
+    # coverage bookkeeping. Defaults are omitted during serialization to keep
+    # default-off / non-momentum payloads unchanged.
+    entry_timing: EntryTimingClassification | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    skipped_gates: list[SkippedGate] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
     # Feature 008: candidate-severity contract violations (data-model §5).
     # Additive + optional, so existing API consumers are unaffected. Kept
     # separate from the soft-gate ``warnings`` above.
@@ -242,6 +298,11 @@ class AnalyzeResponse(BaseModel):
     fair_value_margin_of_safety: Optional[float] = None
     gate_results: List[GateResult] = Field(default_factory=list)
     data_notes: List[str] = Field(default_factory=list)
+    entry_timing: EntryTimingClassification | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Feature 012 US2: preferred gates retained-on under expanded coverage (FR-014).
+    skipped_gates: List[SkippedGate] = Field(default_factory=list)
     # Feature 008: integrity warnings (data-model §5).
     data_integrity_warnings: List[DataIntegrityWarning] = Field(default_factory=list)
     data_suspect: bool = False

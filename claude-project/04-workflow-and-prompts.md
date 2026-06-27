@@ -47,6 +47,15 @@ risk-per-trade % if you want sizing.
 - **52-week high** (or `dist_to_high`), **return_12_1** (12-1 momentum)
 - **debt_to_equity**, **fcf_ttm**, **gp_to_assets**, **asset_growth**
 - **recent vs 50-day volume ratio**
+- **(feature 012) the entry-timing classification** — `entry_timing.state`
+  (entry-ready / not-entry-ready / entry-undetermined), the six component
+  pass/fail/undetermined results, the disqualifiers (climax-top, huge-gap,
+  short-lived-catalyst), and the diagnostics (`base_type`, `pivot`,
+  `base_length_weeks`, `base_depth`, `breakout_volume_ratio`,
+  `dist_above_pivot`, `dist_above_sma_200`). Paste whatever the app shows.
+- **(feature 012) any `skipped` preferred gates** if `expanded_coverage` is on
+  (market regime / sector strength / relative strength) — these are retained,
+  demoted, **not** passes.
 
 **Value (`midterm_value_composite`) also wants:**
 
@@ -64,6 +73,36 @@ The richer the paste, the fewer gates the advisor has to mark "unknown." For
 value, the **metric count and evaluable count matter as much as the scores** —
 always include them.
 
+## Search the news (feature 012 — for the catalyst / "sell-the-news" check)
+
+The screener is an **end-of-day** tool — it has **no news feed**. The
+entry-timing overlay can flag a **short-lived-catalyst** risk structurally (a
+sharp recent advance), but it cannot read *why* a stock moved. That is the one
+thing a Claude Project **can** add: it has web search. So for any momentum
+candidate — especially one near its pivot or flagged not-entry-ready — ask the
+advisor to **search recent news** and reconcile it with your pasted numbers:
+
+```
+Search the web for news on <TKR> from the last ~2 weeks. I'm evaluating it as a
+52-week-high momentum entry as of <date>.
+- Is the run-up driven by a one-off catalyst (earnings beat, single headline,
+  M&A rumor, analyst upgrade, index add)? If so, flag "sell-the-news" /
+  post-catalyst pullback risk.
+- Any pending hard catalyst (earnings date, FDA/PDUFA, court ruling, lockup
+  expiry) inside my 60–180 day horizon?
+- Anything that would void a gate I can't re-check (dilution, going-concern,
+  fraud/restatement, delisting risk)?
+Cite each source with its date. Tell me where my as-of-<date> numbers are likely
+stale versus the news. Do NOT invent prices or fundamentals from the news — only
+flag what to re-verify in the screener.
+```
+
+Honesty rules that still apply (see `03-honesty-and-limitations.md` §11): web
+results can be **wrong, dated, or paywalled-summarized** — the advisor must cite
+and date every claim and never overwrite a *computed* gate result with something
+it read in an article. News informs the **catalyst/timing risk narrative**; it
+does **not** recompute the screen.
+
 ## Template A — "Should I take this MOMENTUM candidate?"
 
 ```
@@ -75,6 +114,9 @@ debt_to_equity: <x>   fcf_ttm: <x>   gp_to_assets: <x>   asset_growth: <x>
 return_12_1: <x>   volume_ratio_recent: <x>
 fair_value: <x>   fair_value_trust_flag: <trusted/unavailable/stale/out_of_range>
 stop_loss: <x>   take_profit: <x>   levels_state: <ok/insufficient_data>   (if app-computed)
+entry_timing.state: <entry-ready/not-entry-ready/entry-undetermined>   (feature 012, if shown)
+entry_timing components/disqualifiers: <paste the pass/fail/undetermined lines + any climax-top / huge-gap / short-lived-catalyst flags>
+skipped_preferred_gates: <paste if expanded_coverage on — these are retained, NOT passes>
 gate_results: <paste if available>
 
 Account: $<x>, risk per trade: <x>% (default 1%).
@@ -84,7 +126,15 @@ derive entry/stop/take-profit (risk clamped to 1–4×ATR, 3R target capped at t
 vol ceiling) and reward:risk. Size with risk-per-trade = (risk% × account) /
 (entry − stop), capped at 10% position / 25% sector — name the binding
 constraint. Treat fair value as context only (momentum names are usually above
-it). Give a directive call with confidence and the biggest risk, then caveats.
+it).
+Read the entry-timing classification as an OBJECTIVE technical STATE, not a
+buy/sell call: explain WHY it is entry-ready / not-entry-ready / entry-undetermined
+(which components failed or were undetermined, which disqualifiers fired). Then
+SEARCH THE WEB for recent news on <TKR> (last ~2 weeks): if there is a
+short-lived catalyst (earnings pop, single headline, one-off spike), flag the
+"sell-the-news" / post-catalyst pullback risk; cite the sources and dates and
+note that my pasted numbers may pre-date the news.
+Give a directive call with confidence and the biggest risk, then caveats.
 Stop mode: trend (default).
 ```
 

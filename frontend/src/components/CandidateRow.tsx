@@ -17,6 +17,16 @@ function stopDistance(entry: string, stop: string) {
   return `${(((entryValue - stopValue) / entryValue) * 100).toFixed(1)}%`;
 }
 
+function entryStateLabel(state: NonNullable<Candidate['entry_timing']>['state']) {
+  if (state === 'entry_ready') return 'Entry-ready';
+  if (state === 'not_entry_ready') return 'Not entry-ready';
+  return 'Entry undetermined';
+}
+
+function componentLabel(name: string) {
+  return name.replaceAll('_', ' ');
+}
+
 export function CandidateRow({
   candidate,
   strategySlug,
@@ -115,6 +125,14 @@ export function CandidateRow({
             ⚠ {candidate.warnings.length} soft-gate {candidate.warnings.length === 1 ? 'warning' : 'warnings'}
           </div>
         ) : null}
+        {candidate.skipped_gates && candidate.skipped_gates.length > 0 ? (
+          <div
+            className="mt-1 inline-flex items-center gap-1 border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700"
+            title={candidate.skipped_gates.map((s) => `${s.gate}: ${s.reason}`).join('\n')}
+          >
+            {candidate.skipped_gates.length} preferred {candidate.skipped_gates.length === 1 ? 'gate' : 'gates'} skipped
+          </div>
+        ) : null}
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">{candidate.sector}</td>
       <td className="px-4 py-3 text-sm text-slate-700">
@@ -155,6 +173,51 @@ export function CandidateRow({
         ) : null}
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">{candidate.reason}</td>
+      <td className="px-4 py-3 text-sm text-slate-700">
+        {candidate.entry_timing ? (
+          <div className="min-w-56 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-900">
+                {entryStateLabel(candidate.entry_timing.state)}
+              </span>
+              <span className="text-xs text-slate-600">{candidate.entry_timing.summary}</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {candidate.entry_timing.components.map((component) => (
+                <span
+                  className={`border px-1.5 py-0.5 text-xs ${
+                    component.status === 'pass'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : component.status === 'fail'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-slate-200 bg-slate-50 text-slate-600'
+                  }`}
+                  key={component.name}
+                  title={component.reason}
+                >
+                  {componentLabel(component.name)}
+                </span>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+              {candidate.entry_timing.diagnostics.pivot !== null &&
+              candidate.entry_timing.diagnostics.pivot !== undefined ? (
+                <span>pivot {candidate.entry_timing.diagnostics.pivot.toFixed(2)}</span>
+              ) : null}
+              {candidate.entry_timing.diagnostics.base_type &&
+              candidate.entry_timing.diagnostics.base_type !== 'none' ? (
+                <span>{candidate.entry_timing.diagnostics.base_type.replaceAll('_', '-')} base</span>
+              ) : null}
+              {candidate.entry_timing.diagnostics.breakout_volume_ratio !== null &&
+              candidate.entry_timing.diagnostics.breakout_volume_ratio !== undefined ? (
+                <span>{candidate.entry_timing.diagnostics.breakout_volume_ratio.toFixed(2)}x vol</span>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <span className="text-xs text-slate-400">-</span>
+        )}
+      </td>
       <td className="px-4 py-3 text-sm text-slate-700">
         <EventsBadge candidate={candidate} />
       </td>

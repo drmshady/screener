@@ -118,6 +118,11 @@ def main() -> None:
         help="Skip Shariah external source refresh.",
     )
     parser.add_argument(
+        "--force-shariah",
+        action="store_true",
+        help="Force Halal Terminal Shariah refresh even inside the cadence window.",
+    )
+    parser.add_argument(
         "--skip-events",
         action="store_true",
         help="Skip earnings, 8-K, and macro event refresh.",
@@ -152,10 +157,20 @@ def main() -> None:
             print(f"Refreshed {finispia_count} Finispia Shariah source rows")
         try:
             halal_terminal_count = seed_halal_terminal_results(
-                manifest_path=MANIFEST_PATH
+                manifest_path=MANIFEST_PATH,
+                force=args.force_shariah,
             )
-        except RuntimeError:
+        except RuntimeError as exc:
             halal_terminal_count = None
+            # Do NOT swallow silently: without this key the compliant ("halal-first")
+            # universe bakes stale behind fresh prices and only the freshness banner
+            # ever notices. Warn loudly; other sources still refreshed above.
+            print(
+                "WARNING: Halal Terminal Shariah source NOT refreshed "
+                f"({exc}). Set HALAL_TERMINAL_API_KEY so the compliant universe "
+                "stays current; the snapshot will otherwise re-bake stale "
+                "compliance data."
+            )
         if halal_terminal_count is not None:
             print(
                 f"Refreshed {halal_terminal_count} Halal Terminal Shariah source rows"

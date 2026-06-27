@@ -284,7 +284,23 @@ def _candidate_block(result: AnalyzeResponse, *, regime_as_of: str | None = None
     if rr is not None:
         lines.append(f"- Reward:risk = {rr}")
     lines.extend(_diagnostics_lines(result))
+    lines.extend(_skipped_gate_lines(result))
     return "\n".join(lines)
+
+
+def _skipped_gate_lines(obj) -> list[str]:
+    """Feature 012 US2 (FR-014): carry the candidate's skipped preferred gates
+    (gate + reason) verbatim into the prompt. Neutral, zero-directive; only
+    present when expanded coverage retained the name on a non-passing preferred
+    gate."""
+    skipped = getattr(obj, "skipped_gates", None) or []
+    if not skipped:
+        return []
+    items = "; ".join(f"{s.gate} ({s.reason})" for s in skipped)
+    return [
+        "- Skipped preferred gates (expanded coverage — retained and demoted below "
+        "all clean names, NOT a pass): " + items
+    ]
 
 
 def _gate_breakdown(result: AnalyzeResponse) -> str:
@@ -456,6 +472,7 @@ def _candidate_summary_block(
         for w in c.data_integrity_warnings:
             lines.append(f"### DATA INTEGRITY WARNING: {w.reason}")
     lines.extend(_diagnostics_lines(c))
+    lines.extend(_skipped_gate_lines(c))
     gate_bits = []
     for g in c.gate_results:
         tag = {"pass": "PASS", "fail": "FAIL", "skipped": "SKIPPED"}.get(g.status, g.status.upper())

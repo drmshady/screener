@@ -252,6 +252,9 @@ def evaluation_context(
     gp_applied: bool = False,
     ag_applied: bool = False,
     single_ticker: bool = False,
+    tiered: bool | None = None,
+    relative_strength_applied: bool = False,
+    benchmark_return_12_1: float | None = None,
 ) -> dict:
     """Build row-evaluation context for screen and single-ticker paths."""
     return {
@@ -265,6 +268,12 @@ def evaluation_context(
         "gp_applied": gp_applied,
         "ag_applied": ag_applied,
         "single_ticker": single_ticker,
+        # Feature 012 US2: when tiered/expanded coverage is active, post-proximity
+        # gates warn (demote) instead of hard-filtering, and the relative-strength
+        # preferred confirmation is appended.
+        "tiered": tiered,
+        "relative_strength_applied": relative_strength_applied,
+        "benchmark_return_12_1": benchmark_return_12_1,
     }
 
 
@@ -439,9 +448,40 @@ def evaluate(row, context: dict | None = None) -> list[dict]:
         )
         out.append({"gate": "Low asset growth", "status": "skipped", "detail": detail})
 
+    # Relative strength (feature 012 US2): a NEW preferred soft confirmation — the
+    # name's 12-1 momentum versus SPY's. Appended only when expanded coverage is
+    # active (so the default payload/contract is unchanged); fails open to
+    # "skipped" when the benchmark or the name's momentum is unavailable.
+    if context.get("relative_strength_applied"):
+        benchmark = context.get("benchmark_return_12_1")
+        ret = _as_float(row.get("return_12_1"))
+        if benchmark is None or ret is None:
+            out.append(
+                {
+                    "gate": "Relative strength",
+                    "status": "skipped",
+                    "detail": "benchmark (SPY) momentum unavailable; relative strength not evaluated",
+                }
+            )
+        else:
+            passed = ret >= benchmark
+            out.append(
+                {
+                    "gate": "Relative strength",
+                    "status": _status(passed),
+                    "detail": (
+                        f"12-1 momentum {ret * 100:.1f}% vs SPY {benchmark * 100:.1f}% "
+                        f"({'leading' if passed else 'lagging'} the market)"
+                    ),
+                }
+            )
+
     # Tier reclassification is opt-in. The default contract remains hard
     # pass/fail/skipped so the OpenAPI schema and regression tests stay stable.
-    if _gate_mode() == "tiered":
+    tiered = context.get("tiered")
+    if tiered is None:
+        tiered = _gate_mode() == "tiered"
+    if tiered:
         for gate in out:
             if gate["gate"] != "52-week-high proximity" and gate["status"] == "fail":
                 gate["status"] = "warn"
@@ -536,6 +576,20 @@ def _gate_mode() -> str:
     research variant where non-proximity gates warn and rank instead."""
     mode = os.getenv("SCREENER_GATE_MODE", "hard").strip().lower()
     return mode if mode in {"tiered", "hard"} else "hard"
+
+
+def _expanded_coverage(df: pd.DataFrame | None) -> bool:
+    """Feature 012 US2: whether expanded coverage is active for this run — set
+    per-run via ``df.attrs['expanded_coverage']`` (the engine forwards the screen
+    parameter) or via the SCREENER_EXPANDED_COVERAGE operator default."""
+    attr = bool(getattr(df, "attrs", {}).get("expanded_coverage", False)) if df is not None else False
+    return attr or flags.expanded_coverage()
+
+
+def _tiered_mode(df: pd.DataFrame | None = None) -> bool:
+    """True when the post-proximity gates should warn+demote instead of hard-
+    filtering: either the Decision 7 research env flag or US2 expanded coverage."""
+    return _gate_mode() == "tiered" or _expanded_coverage(df)
 
 
 def _strong_sectors_by_breadth(df: pd.DataFrame, top_fraction: float) -> set[str] | None:
@@ -716,10 +770,11 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
     if matched.empty:
         return _with_notes(matched)
 
-    # Decision 7: in TIERED mode the remaining gates are soft — they DON'T filter,
-    # they warn + rank (computed later from per-row gate_results). In HARD mode
-    # (legacy / backtest A/B) each one still excludes. Notes are recorded in both.
-    hard_mode = _gate_mode() == "hard"
+    # Decision 7 / feature 012 US2: in TIERED mode (research env flag) or with US2
+    # expanded coverage the remaining gates are soft — they DON'T filter, they
+    # warn + rank (computed later from per-row gate_results). In HARD mode (default
+    # / backtest A/B) each one still excludes. Notes are recorded in both.
+    hard_mode = not _tiered_mode(df)
 
     # 1b. Sector strength gate (soft)
     if strong_sectors is not None and hard_mode:
@@ -840,8 +895,18 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         vol_col=vol_col,
         gp_applied=xs["gp_applied"],
         ag_applied=xs["ag_applied"],
+        tiered=not hard_mode,
+        # US2: the relative-strength preferred confirmation is appended only when
+        # expanded coverage / tiered mode is active (keeps the default payload
+        # byte-identical); it reads the SPY benchmark the engine forwards via attrs.
+        relative_strength_applied=not hard_mode,
+        benchmark_return_12_1=df.attrs.get("benchmark_return_12_1"),
     )
     matched["gate_results"] = [evaluate(r, gate_context) for _, r in matched.iterrows()]
+    if not hard_mode and "relative strength" in {
+        g["gate"].lower() for gr in matched["gate_results"] for g in gr
+    }:
+        gates_applied.append("relative strength")
     # Decision 7: per-row warnings (soft gates the name failed). In tiered mode a
     # listed candidate cleared the HARD gate (proximity) and carries these as
     # warnings; in hard mode there are none (those names were filtered out).

@@ -121,3 +121,115 @@ def sizing_inverse_vol_baseline() -> float:
     SCREENER_SIZING_INVERSE_VOL_BASELINE.
     """
     return float(os.getenv("SCREENER_SIZING_INVERSE_VOL_BASELINE", "0.02"))
+
+
+# --- Feature 012: entry-timing overlay knobs -------------------------------
+
+
+def entry_pivot_max_extension() -> float:
+    """Maximum allowed distance above the detected pivot for the entry overlay.
+
+    Default 0.05 (5%). Override with SCREENER_ENTRY_PIVOT_MAX_EXT.
+    """
+    return float(os.getenv("SCREENER_ENTRY_PIVOT_MAX_EXT", "0.05"))
+
+
+def entry_volume_ratio_min() -> float:
+    """Minimum breakout-window volume ratio versus the 50-day average.
+
+    Default 1.4x. Override with SCREENER_ENTRY_VOL_RATIO_MIN.
+    """
+    return float(os.getenv("SCREENER_ENTRY_VOL_RATIO_MIN", "1.4"))
+
+
+def entry_volume_ratio_preferred() -> float:
+    """Preferred/strong breakout-volume ratio label threshold.
+
+    Default 1.5x. Override with SCREENER_ENTRY_VOL_RATIO_PREF.
+    """
+    return float(os.getenv("SCREENER_ENTRY_VOL_RATIO_PREF", "1.5"))
+
+
+def entry_flat_base_min_weeks() -> float:
+    """Minimum maturity for a detected flat base, in weeks."""
+    return float(os.getenv("SCREENER_ENTRY_FLAT_BASE_MIN_WEEKS", "5"))
+
+
+def entry_cup_base_min_weeks() -> float:
+    """Minimum maturity for cup-family and double-bottom bases, in weeks."""
+    return float(os.getenv("SCREENER_ENTRY_CUP_BASE_MIN_WEEKS", "7"))
+
+
+def entry_base_depth_max() -> float:
+    """Maximum supported base depth before the overlay marks the base as deep."""
+    return float(os.getenv("SCREENER_ENTRY_BASE_DEPTH_MAX", "0.33"))
+
+
+def entry_sma200_extension_max() -> float:
+    """Maximum distance above SMA-200 before the overlay marks the name extended."""
+    return float(os.getenv("SCREENER_ENTRY_SMA200_EXT_MAX", "0.40"))
+
+
+def entry_climax_advance_min() -> float:
+    """Trailing advance threshold for the climax-top disqualifier."""
+    return float(os.getenv("SCREENER_ENTRY_CLIMAX_ADVANCE_MIN", "0.25"))
+
+
+def entry_climax_prior_trend_weeks() -> float:
+    """Required prior trend duration for the climax-top disqualifier."""
+    return float(os.getenv("SCREENER_ENTRY_CLIMAX_PRIOR_TREND_WEEKS", "8"))
+
+
+def entry_huge_gap_threshold() -> float:
+    """Distance above pivot that marks a breakout gap as extended."""
+    return float(os.getenv("SCREENER_ENTRY_HUGE_GAP_THRESHOLD", "0.05"))
+
+
+# --- Feature 012 US2: expanded candidate coverage knobs --------------------
+
+_GATE_TIERS = {"essential", "preferred", "disqualifier"}
+
+
+def expanded_coverage() -> bool:
+    """Whether a non-pass on a *preferred* gate retains + demotes the candidate
+    instead of excluding it (FR-009/013).
+
+    DEFAULT OFF — the screen is byte-identical to today's hard-mode behaviour
+    (SC-009). The per-run screen ``expanded_coverage`` parameter takes precedence;
+    this env default is the operator fallback. Override with
+    SCREENER_EXPANDED_COVERAGE=1.
+    """
+    return os.getenv("SCREENER_EXPANDED_COVERAGE", "0").strip().lower() in _TRUTHY
+
+
+def gate_tier_overrides() -> dict[str, str]:
+    """Operator overrides for the per-strategy gate→tier map (FR-009).
+
+    Format: ``SCREENER_GATE_TIER_OVERRIDES="sector strength=essential,relative
+    strength=preferred"`` — a comma-separated list of ``<gate>=<tier>`` pairs.
+    Gate names are matched case-insensitively; an unrecognized tier is ignored.
+    """
+    raw = os.getenv("SCREENER_GATE_TIER_OVERRIDES", "").strip()
+    out: dict[str, str] = {}
+    if not raw:
+        return out
+    for pair in raw.split(","):
+        if "=" not in pair:
+            continue
+        gate, tier = pair.split("=", 1)
+        gate = gate.strip().lower()
+        tier = tier.strip().lower()
+        if gate and tier in _GATE_TIERS:
+            out[gate] = tier
+    return out
+
+
+# --- Feature 012 US3: Shariah cadence knobs --------------------------------
+
+
+def shariah_refresh_interval_days() -> int:
+    """Halal Terminal refresh cadence, in calendar days.
+
+    Default 90 (~quarterly). Override with SCREENER_SHARIAH_REFRESH_INTERVAL_DAYS.
+    """
+    return int(os.getenv("SCREENER_SHARIAH_REFRESH_INTERVAL_DAYS", "90"))

@@ -150,3 +150,32 @@ everything.
   encodes "conviction."
 - **Determinism preserved.** The bounded levels and sizing are deterministic on a
   fixed snapshot (see #7).
+
+## 11. Entry-timing overlay & the news search (Feature 012, MOMENTUM only)
+
+- **It is a diagnostic, not a strategy or a signal.** The `entry-ready /
+  not-entry-ready / entry-undetermined` classification and its six components
+  change **no gate, threshold, ranking, or citation** — they annotate an
+  already-surfaced momentum candidate with an objective technical *state*
+  (Minervini 2013; Faber 2007). It is **not** CAN SLIM / O'Neil. It attaches to
+  `midterm_52w_high_momentum` only — never value, never short-term. Default OFF.
+- **`entry-undetermined` ≠ bad setup.** It means a component could not be
+  evaluated (missing data, or a base the geometric classifier couldn't label).
+  The overlay is built to **never emit a false entry-ready** — when in doubt it
+  abstains. Say "undetermined," don't upgrade it to a pass.
+- **Expanded coverage retains, it does not bless.** With `expanded_coverage` on,
+  a non-passing *preferred* gate (market regime / sector strength / relative
+  strength) is kept but marked `skipped` and **demoted below every clean name**.
+  A `skipped` preferred gate is **not** a pass — flag it exactly like a
+  fail-open pass (see #2). Essential gates and disqualifiers still exclude /
+  force not-entry-ready regardless of the toggle.
+- **The short-lived-catalyst flag is structural, not informed.** The overlay can
+  see a sharp recent advance; it cannot read *why*. That is what the **news
+  search** is for. When you search: **cite and date every source**, treat
+  results as possibly stale/wrong/paywalled, and use them only for the
+  catalyst/timing-risk narrative — **never** to recompute a gate or to assert a
+  price/fundamental the screener didn't produce (see #6, and Custom-Instructions
+  rules 8–9).
+- **Determinism still holds for the overlay itself** — same snapshot ⇒ same
+  classification. (Web-search results are *not* part of that snapshot and are not
+  deterministic; keep the two clearly separate.)

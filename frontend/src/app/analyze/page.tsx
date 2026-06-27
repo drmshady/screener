@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Abbr } from '@/components/Abbr';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
+import { EntryReadinessDetails } from '@/components/EntryReadinessDetails';
 import { supportsAdvisorPrompt } from '@/lib/advisorPrompt';
 import {
   AnalyzeResponse,
@@ -34,9 +35,14 @@ function badgeLabel(status: GateStatus) {
   return 'SKIP';
 }
 
+function initialTicker() {
+  if (typeof window === 'undefined') return 'AAPL';
+  return new URLSearchParams(window.location.search).get('ticker')?.trim().toUpperCase() || 'AAPL';
+}
+
 export default function AnalyzePage() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [ticker, setTicker] = useState('AAPL');
+  const [ticker, setTicker] = useState(initialTicker);
   const [strategy, setStrategy] = useState('midterm_52w_high_momentum');
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -69,8 +75,8 @@ export default function AnalyzePage() {
     const param = new URLSearchParams(window.location.search).get('ticker');
     if (!param) return;
     const symbol = param.trim().toUpperCase();
-    setTicker(symbol);
-    runAnalysis(symbol, strategy);
+    const timer = window.setTimeout(() => runAnalysis(symbol, strategy), 0);
+    return () => window.clearTimeout(timer);
     // Run once on mount; strategy defaults to the mid-term slug.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -176,6 +182,7 @@ export default function AnalyzePage() {
                   <dd className="font-semibold text-slate-950">{money(result.take_profit)}</dd>
                 </div>
               </dl>
+              {result.entry_timing ? <EntryReadinessDetails entryTiming={result.entry_timing} /> : null}
               {result.data_notes.length ? (
                 <div className="mt-4 border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                   <p className="font-medium">Data notes</p>

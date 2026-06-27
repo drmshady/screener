@@ -47,6 +47,11 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
   // returns); when on, keep only names in the top half of sectors by breadth.
   // This is a momentum overlay, so the control only renders for that strategy.
   const [sectorGateOn, setSectorGateOn] = useState(false);
+  const [entryReadyOnly, setEntryReadyOnly] = useState(false);
+  // Expanded coverage (US2): off by default (today's strict gating). When on,
+  // momentum candidates failing a non-essential (preferred) gate are retained,
+  // marked skipped, and demoted below all clean names.
+  const [expandedCoverage, setExpandedCoverage] = useState(false);
   // Value-only falling-knife guard: off by default (pure value). When on, exclude
   // names whose 12-1 month momentum is below the floor so the screen doesn't buy
   // cheapness that is cheap *because* it is collapsing.
@@ -97,13 +102,17 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
     const valueParams = isValue
       ? { min_momentum_12_1: momentumFloorOn ? VALUE_MOMENTUM_FLOOR : -1.0 }
       : {};
+    const entryParams = isMomentum
+      ? { entry_ready_only: entryReadyOnly, expanded_coverage: expandedCoverage }
+      : {};
     return {
       parameters: isSaudi
-        ? { market: 'SA', sector_strength_top_fraction: sectorFraction, ...valueParams }
+        ? { market: 'SA', sector_strength_top_fraction: sectorFraction, ...entryParams, ...valueParams }
         : {
             liquidity_min_avg_dollar_volume_20d: settings.liquidity_min_avg_dollar_volume_20d,
             liquidity_min_price: settings.liquidity_min_price,
             sector_strength_top_fraction: sectorFraction,
+            ...entryParams,
             ...valueParams,
           },
       filters: {
@@ -280,7 +289,7 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
       </section>
 
       {isMomentum ? (
-        <section className="panel flex flex-col gap-1 p-4 text-sm text-slate-700">
+        <section className="panel flex flex-col gap-3 p-4 text-sm text-slate-700">
           <label className="inline-flex items-center gap-2">
             <input
               checked={sectorGateOn}
@@ -294,6 +303,34 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
             {sectorGateOn
               ? 'On: keep only names in the top half of sectors by breadth (lower drawdown, fewer candidates).'
               : 'Off (default): the gate lost the A/B on returns, so it is disabled. Turn on to filter to leading sectors.'}
+          </p>
+          <label className="inline-flex items-center gap-2">
+            <input
+              checked={entryReadyOnly}
+              className="h-4 w-4"
+              onChange={(event) => setEntryReadyOnly(event.target.checked)}
+              type="checkbox"
+            />
+            <span className="font-medium text-slate-900">Entry-ready only</span>
+          </label>
+          <p className="text-xs text-slate-500 sm:pl-6">
+            {entryReadyOnly
+              ? 'On: show only names whose entry-timing diagnostics are all passing.'
+              : 'Off (default): annotate every returned momentum candidate.'}
+          </p>
+          <label className="inline-flex items-center gap-2">
+            <input
+              checked={expandedCoverage}
+              className="h-4 w-4"
+              onChange={(event) => setExpandedCoverage(event.target.checked)}
+              type="checkbox"
+            />
+            <span className="font-medium text-slate-900">Expanded coverage</span>
+          </label>
+          <p className="text-xs text-slate-500 sm:pl-6">
+            {expandedCoverage
+              ? 'On: keep names that miss a non-essential (preferred) gate — they are marked skipped, with the reason, and ranked below every clean name. Essential gates and disqualifiers still exclude.'
+              : 'Off (default): strict gating — a name failing any gate is dropped. No gate threshold changes either way.'}
           </p>
         </section>
       ) : null}
@@ -393,7 +430,11 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
           ) : null}
           {screenResult.candidates.length === 0 ? (
             <div className="border border-slate-200 bg-white p-4 text-sm text-slate-600">
-              <p className="font-medium text-slate-950">No candidates matched the active filters.</p>
+              <p className="font-medium text-slate-950">
+                {isMomentum && entryReadyOnly
+                  ? 'No candidates are entry-ready under the active diagnostics.'
+                  : 'No candidates matched the active filters.'}
+              </p>
               <p className="mt-1">
                 Review the data completeness notes, adjust filters, or refresh stale sources before interpreting the
                 screen.
@@ -412,6 +453,7 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
                     <th className="px-4 py-3 text-right">Stop / Distance</th>
                     <th className="px-4 py-3 text-right">Target</th>
                     <th className="px-4 py-3">Reason</th>
+                    <th className="px-4 py-3">Entry timing</th>
                     <th className="px-4 py-3">Events</th>
                     <th className="px-4 py-3 text-right">Action</th>
                   </tr>

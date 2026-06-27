@@ -90,6 +90,47 @@ export const DataIntegrityWarningSchema = z.object({
   reason: z.string(),
 });
 
+export const EntryTimingSchema = z.object({
+  state: z.enum(['entry_ready', 'not_entry_ready', 'entry_undetermined']),
+  components: z.array(
+    z.object({
+      name: z.enum([
+        'pivot_proximity',
+        'trend',
+        'volume_confirmation',
+        'base_maturity',
+        'base_depth',
+        'not_extended',
+      ]),
+      status: z.enum(['pass', 'fail', 'undetermined']),
+      value: z.number().nullable().optional(),
+      reason: z.string(),
+    }),
+  ),
+  disqualifiers: z
+    .array(
+      z.object({
+        name: z.enum(['climax_top', 'huge_gap', 'short_lived_catalyst']),
+        triggered: z.boolean(),
+        value: z.number().nullable().optional(),
+        reason: z.string(),
+        forces_not_entry_ready: z.boolean(),
+      }),
+    )
+    .optional()
+    .default([]),
+  diagnostics: z.object({
+    pivot: z.number().nullable().optional(),
+    base_type: z.enum(['flat', 'cup', 'cup_with_handle', 'double_bottom', 'none']).nullable().optional(),
+    base_length_weeks: z.number().nullable().optional(),
+    base_depth: z.number().nullable().optional(),
+    breakout_volume_ratio: z.number().nullable().optional(),
+    dist_above_pivot: z.number().nullable().optional(),
+    dist_above_sma_200: z.number().nullable().optional(),
+  }),
+  summary: z.string(),
+});
+
 export const StrategySchema = z.object({
   slug: z.string(),
   name: z.string(),
@@ -160,6 +201,16 @@ export const CandidateSchema = z.object({
     .optional()
     .default([]),
   warnings: z.array(z.string()).optional().default([]),
+  entry_timing: EntryTimingSchema.nullable().optional(),
+  skipped_gates: z
+    .array(
+      z.object({
+        gate: z.string(),
+        reason: z.string(),
+      }),
+    )
+    .optional()
+    .default([]),
   // Feature 008: integrity warnings (data-model §5).
   data_integrity_warnings: z.array(DataIntegrityWarningSchema).optional().default([]),
   data_suspect: z.boolean().optional().default(false),
@@ -233,6 +284,7 @@ export const AnalyzeResponseSchema = z.object({
       detail: z.string(),
     }),
   ),
+  entry_timing: EntryTimingSchema.nullable().optional(),
   value_composite: z.number().nullable().optional(),
   book_to_market: z.number().nullable().optional(),
   earnings_yield: z.number().nullable().optional(),

@@ -10,9 +10,11 @@ from ..agent.advisor_prompt import build_advisor_prompt, load_survivorship_statu
 from ..data.fundamentals import FundamentalsLoader
 from ..data.saudi_universe import saudi_universe
 from ..lib.disclaimer import DISCLAIMER_TEXT
+from ..lib import flags
 from ..lib.flags import personal_use_directive
 from ..models.strategy import AdvisorPromptResponse, AnalyzeResponse
 from ..regime.calculator import current_regime_response
+from ..screening.entry_timing import EntryThresholds, classify_entry_timing
 from ..screening.engine import (
     _compliant_universe,
     build_single_ticker_snapshot,
@@ -50,6 +52,21 @@ def _material_input_freshness(data_as_of: str, as_of: str | None = None) -> dict
 _DEFAULT_SHARIAH_SOURCES = [
     "spus_holdings", "spwo_holdings", "spre_holdings", "spte_holdings", "halal_terminal",
 ]
+
+
+def _entry_thresholds() -> EntryThresholds:
+    return EntryThresholds(
+        pivot_max_extension=flags.entry_pivot_max_extension(),
+        volume_ratio_min=flags.entry_volume_ratio_min(),
+        volume_ratio_preferred=flags.entry_volume_ratio_preferred(),
+        flat_min_weeks=flags.entry_flat_base_min_weeks(),
+        cup_min_weeks=flags.entry_cup_base_min_weeks(),
+        base_depth_max=flags.entry_base_depth_max(),
+        sma200_extension_max=flags.entry_sma200_extension_max(),
+        climax_advance_min=flags.entry_climax_advance_min(),
+        climax_prior_trend_weeks=flags.entry_climax_prior_trend_weeks(),
+        huge_gap_threshold=flags.entry_huge_gap_threshold(),
+    )
 
 
 def _market_universe(symbol: str, as_of: str | None) -> pd.DataFrame:
@@ -212,6 +229,7 @@ def compute_candidate_result(
         )
 
     would_be_selected = not any(gate["status"] == "fail" for gate in gate_results)
+    entry_timing = classify_entry_timing(row.to_dict(), thresholds=_entry_thresholds())
 
     return AnalyzeResponse(
         ticker=symbol,
@@ -248,6 +266,7 @@ def compute_candidate_result(
         fair_value_trust_flag=row.get("fair_value_trust_flag"),
         fair_value_margin_of_safety=_as_float(row.get("fair_value_margin_of_safety")),
         gate_results=gate_results,
+        entry_timing=entry_timing,
         data_notes=data_notes,
         material_input_freshness=_material_input_freshness(data_as_of, as_of),
         data_as_of=data_as_of,

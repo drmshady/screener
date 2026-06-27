@@ -5,6 +5,7 @@ import { Abbr } from '@/components/Abbr';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidatePriceChart } from '@/components/ChartPanels';
 import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
+import { EntryReadinessDetails } from '@/components/EntryReadinessDetails';
 import { IndependentVerify } from '@/components/IndependentVerify';
 import { ShariahBadge } from '@/components/ShariahBadge';
 import { supportsAdvisorPrompt } from '@/lib/advisorPrompt';
@@ -254,6 +255,7 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                   <dd className="font-semibold text-slate-950">{formatMoney(match.take_profit, detail.ticker)}</dd>
                 </div>
               </dl>
+              {match.entry_timing ? <EntryReadinessDetails entryTiming={match.entry_timing} /> : null}
               {match.gate_results && match.gate_results.length > 0 ? (
                 <div className="mt-4 border border-slate-200">
                   <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase text-slate-600">

@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
 
+from ..lib import flags
+from ..shariah.refresh_cadence import RefreshDecision, should_refresh
 from .shariah_sources import (
     DEFAULT_DB_PATH,
     DEFAULT_MANIFEST_PATH,
+    load_manifest,
     normalize_ticker,
     parse_source_as_of,
     replace_source_rows,
@@ -33,6 +37,88 @@ def _api_key(api_key: str | None = None) -> str:
 
 def _headers(api_key: str | None = None) -> dict[str, str]:
     return {"X-API-Key": _api_key(api_key)}
+
+
+def _key_present(api_key: str | None = None) -> bool:
+    return bool(api_key or os.getenv("HALAL_TERMINAL_API_KEY"))
+
+
+def _parse_manifest_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _halal_terminal_meta(manifest_path: Path | str) -> dict[str, Any]:
+    return load_manifest(manifest_path).get("sources", {}).get(
+        HALAL_TERMINAL_SOURCE_NAME, {}
+    )
+
+
+def _last_success_at(manifest_path: Path | str) -> datetime | None:
+    return _parse_manifest_datetime(_halal_terminal_meta(manifest_path).get("source_as_of"))
+
+
+def _cached_row_count(manifest_path: Path | str) -> int:
+    raw = _halal_terminal_meta(manifest_path).get("last_row_count")
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cadence_decision(
+    *,
+    api_key: str | None,
+    manifest_path: Path | str,
+    force: bool,
+    now: datetime | None,
+    key_present: bool | None = None,
+) -> RefreshDecision:
+    return should_refresh(
+        now or datetime.now(timezone.utc),
+        _last_success_at(manifest_path),
+        interval_days=flags.shariah_refresh_interval_days(),
+        force=force,
+        key_present=_key_present(api_key) if key_present is None else key_present,
+    )
+
+
+def _mark_stale_manifest(
+    manifest_path: Path | str,
+    decision: RefreshDecision,
+    *,
+    source_url: str,
+) -> None:
+    path = Path(manifest_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = load_manifest(path)
+    source = manifest.setdefault("sources", {}).setdefault(
+        HALAL_TERMINAL_SOURCE_NAME,
+        {
+            "kind": "shariah",
+            "source_as_of": None,
+            "source_url": source_url,
+            "last_row_count": 0,
+        },
+    )
+    source.update(
+        {
+            "kind": "shariah",
+            "refresh_interval_days": flags.shariah_refresh_interval_days(),
+            "source_url": source.get("source_url") or source_url,
+            "is_stale": True,
+            "stale_reason": decision.reason,
+            "notes": "Cached Halal Terminal compliance data. WARNING: compliance data stale; refresh lapsed without a successful API call.",
+        }
+    )
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def _is_us_equity(row: dict[str, Any]) -> bool:
@@ -90,7 +176,28 @@ def seed_halal_terminal_results(
     api_key: str | None = None,
     db_path: Path | str = DEFAULT_DB_PATH,
     manifest_path: Path | str = DEFAULT_MANIFEST_PATH,
+    force: bool = False,
+    now: datetime | None = None,
+    key_present: bool | None = None,
 ) -> int:
+    decision = _cadence_decision(
+        api_key=api_key,
+        manifest_path=manifest_path,
+        force=force,
+        now=now,
+        key_present=key_present,
+    )
+    if decision.action == "skip":
+        return _cached_row_count(manifest_path)
+    if decision.action == "stale":
+        _mark_stale_manifest(
+            manifest_path,
+            decision,
+            source_url=f"{HALAL_TERMINAL_BASE_URL}/api/results",
+        )
+        print(f"WARNING: {decision.reason}")
+        return _cached_row_count(manifest_path)
+
     rows = fetch_cached_results(api_key)
     us_equity_rows = [row for row in rows if _is_us_equity(row)]
     compliant_rows = [
@@ -104,12 +211,13 @@ def seed_halal_terminal_results(
         manifest_path=manifest_path,
         manifest_metadata={
             "display_name": "Halal Terminal",
-            "refresh_interval_days": 7,
+            "refresh_interval_days": flags.shariah_refresh_interval_days(),
             "source_url": f"{HALAL_TERMINAL_BASE_URL}/api/results",
             "raw_result_count": len(rows),
             "us_equity_count": len(us_equity_rows),
             "stale_result_count": stale_count,
             "is_stale": stale_count > 0,
+            "cadence_reason": decision.reason,
             "notes": "Cached Halal Terminal screening results. Missing tickers require live /api/screen/{symbol} calls with an API key.",
         },
     )
@@ -126,7 +234,10 @@ def bulk_screen_universe(
     rate_limit_sleep: float = 0.25,
     max_symbols: int | None = None,
     screen_fn: Callable[[str], dict[str, Any]] | None = None,
-) -> dict[str, int]:
+    force: bool = False,
+    now: datetime | None = None,
+    key_present: bool | None = None,
+) -> dict[str, Any]:
     """Bulk-classify a universe via Halal Terminal per-symbol screening (T126).
 
     Resumable: every screened symbol's raw result is cached to `cache_dir` as
@@ -136,6 +247,44 @@ def bulk_screen_universe(
 
     Requires `HALAL_TERMINAL_API_KEY` (or `api_key`) unless `screen_fn` is given.
     """
+    universe = sorted({normalize_ticker(t) for t in tickers if normalize_ticker(t)})
+    if max_symbols is not None:
+        universe = universe[:max_symbols]
+
+    stats: dict[str, Any] = {
+        "universe": len(universe),
+        "screened": 0,
+        "from_cache": 0,
+        "compliant": 0,
+        "errors": 0,
+        "stale": 0,
+    }
+    decision = _cadence_decision(
+        api_key=api_key,
+        manifest_path=manifest_path,
+        force=force,
+        now=now,
+        key_present=(
+            (screen_fn is not None) or _key_present(api_key)
+            if key_present is None
+            else key_present
+        ),
+    )
+    if decision.action == "skip":
+        stats["from_cache"] = len(universe)
+        stats["reason"] = decision.reason
+        return stats
+    if decision.action == "stale":
+        stats["stale"] = 1
+        stats["reason"] = decision.reason
+        _mark_stale_manifest(
+            manifest_path,
+            decision,
+            source_url=f"{HALAL_TERMINAL_BASE_URL}/api/screen",
+        )
+        print(f"WARNING: {decision.reason}")
+        return stats
+
     if screen_fn is None:
         key = _api_key(api_key)  # raises RuntimeError if unset
         screen = lambda ticker: screen_symbol(ticker, key)  # noqa: E731
@@ -144,11 +293,6 @@ def bulk_screen_universe(
 
     cache_path = Path(cache_dir)
     cache_path.mkdir(parents=True, exist_ok=True)
-    universe = sorted({normalize_ticker(t) for t in tickers if normalize_ticker(t)})
-    if max_symbols is not None:
-        universe = universe[:max_symbols]
-
-    stats = {"universe": len(universe), "screened": 0, "from_cache": 0, "compliant": 0, "errors": 0, "stale": 0}
     for i, ticker in enumerate(universe, start=1):
         path = cache_path / f"{ticker}.json"
         if path.exists():
@@ -192,10 +336,11 @@ def bulk_screen_universe(
         manifest_path=manifest_path,
         metadata={
             "display_name": "Halal Terminal",
-            "refresh_interval_days": 7,
+            "refresh_interval_days": flags.shariah_refresh_interval_days(),
             "is_stale": stats["stale"] > 0,
             "stale_result_count": stats["stale"],
             "bulk_universe_screened": stats["universe"],
+            "cadence_reason": decision.reason,
             "notes": "Bulk per-symbol Halal Terminal screening; raw results cached under data/halal_terminal_cache/.",
         },
     )

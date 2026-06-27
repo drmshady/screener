@@ -1,12 +1,18 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/011-auto-refresh-risk-sizing/plan.md` (active feature 011), which builds on
-the 010 online-deployment, 009 release-readiness, 008 momentum data-integrity, 006
-side-by-side compare, 005 value strategy, 004 advisor export, 003 comparison, 002
-validation, and 001 MVP below.
+`specs/012-entry-timing-coverage/plan.md` (active feature 012), which builds on
+the 011 auto-refresh-risk-sizing, 010 online-deployment, 009 release-readiness, 008
+momentum data-integrity, 006 side-by-side compare, 005 value strategy, 004 advisor
+export, 003 comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 011-auto-refresh-risk-sizing
+## Active feature: 012-entry-timing-coverage
+
+Plan: `specs/012-entry-timing-coverage/plan.md`. This active feature adds the
+momentum-only entry-timing overlay, opt-in expanded coverage, and the 90-day
+Halal Terminal refresh cadence. Older feature summaries remain below for context.
+
+## Prior feature: 011-auto-refresh-risk-sizing
 
 Three independent slices layered on the now-live (feature 010) single-owner screener:
 
