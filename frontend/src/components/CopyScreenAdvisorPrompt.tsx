@@ -16,22 +16,41 @@ type State = {
  * Feature 004 (batch): one combined advisor prompt covering every candidate in
  * the current screen. Re-runs the screen on the backend with the same request
  * body so the prompt's numbers match what is displayed, then copies the result.
+ *
+ * `overrideParameters` (feature 012) merges into the request body's `parameters`
+ * — used by the one-click "Project triage" preset to force `expanded_coverage`
+ * ON (wider list, demoted preferred-gate names retained) and `entry_ready_only`
+ * OFF (keep Watch candidates) regardless of the on-screen toggles, so a single
+ * click yields the full Enter/Watch triage prompt for the Claude Project.
  */
 export function CopyScreenAdvisorPrompt({
   slug,
   getRequestBody,
   disabled,
+  overrideParameters,
+  idleLabel = 'Copy advisor prompt (all results)',
 }: {
   slug: string;
   getRequestBody: () => unknown;
   disabled?: boolean;
+  overrideParameters?: Record<string, unknown>;
+  idleLabel?: string;
 }) {
   const [state, setState] = useState<State>({});
+
+  function requestBody() {
+    const body = getRequestBody();
+    if (overrideParameters && body && typeof body === 'object') {
+      const b = body as { parameters?: Record<string, unknown> };
+      b.parameters = { ...(b.parameters ?? {}), ...overrideParameters };
+    }
+    return body;
+  }
 
   async function generate() {
     setState({ loading: true });
     try {
-      const res = await fetchScreenAdvisorPrompt(slug, getRequestBody());
+      const res = await fetchScreenAdvisorPrompt(slug, requestBody());
       const copied = await copyText(res.prompt);
       setState({ prompt: res.prompt, directive: res.personal_use_directive, count: res.candidate_count, copied });
     } catch (error) {
@@ -51,7 +70,7 @@ export function CopyScreenAdvisorPrompt({
           ? 'Generating...'
           : state.copied
             ? `Copied prompt (${state.count} candidate${state.count === 1 ? '' : 's'})`
-            : 'Copy advisor prompt (all results)'}
+            : idleLabel}
       </button>
       {state.error ? <p className="mt-2 text-sm text-rose-700">{state.error}</p> : null}
       {state.prompt ? (

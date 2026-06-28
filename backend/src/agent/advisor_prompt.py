@@ -479,9 +479,10 @@ def _research_and_summary_instruction(directive: bool, *, multi: bool) -> str:
     'strongest' framing stays neutral when directive guidance is off (hosted mode
     forces it off and non-waivable)."""
     best = (
-        "rank the strongest candidates best-to-worst to act on now"
+        "lists the ENTER names best-to-worst to act on now, with the WATCH names after"
         if directive
-        else "highlight the strongest screen matches for further research"
+        else "highlights the ENTER-candidate names (strongest screen matches for further "
+        "research), with the WATCH names after"
     )
     parts = [
         "ADDITIONAL RESEARCH (use web search; cite and DATE every source):",
@@ -506,24 +507,66 @@ def _research_and_summary_instruction(directive: bool, *, multi: bool) -> str:
     return "\n".join(parts)
 
 
-def _batch_task_instruction(directive: bool, n: int) -> str:
+_BUCKET_PREGATE = (
+    "FIRST gate the WHOLE list before bucketing: confirm the market regime and "
+    "(for Shariah-compliant screens) halal-source freshness from the context below. "
+    "If the regime is Unfavorable or Unknown, or the compliance data is stale, say so "
+    "and cap every name at WATCH until it is resolved."
+)
+_BUCKET_EXCLUDE = (
+    "EXCLUDE from BOTH buckets (not merely demote) any candidate carrying a DATA "
+    "INTEGRITY WARNING, a stale corporate-action / pinned-price signature, or marked "
+    "data-suspect."
+)
+_BUCKET_ENTRY_TIMING_MOMENTUM = (
+    "Treat the entry-timing state as a TIE-BREAKER / RISK-VETO, NOT a gate: a clean name "
+    "that is below its pivot or shows a weak-volume breakout is still a valid ENTER (that "
+    "is the George & Hwang underreaction-drift thesis) — entry-timing only DEMOTES the "
+    "names that are materially extended above the 200-day SMA, or that fired a forcing "
+    "disqualifier (climax-top, huge-gap) or a short-lived-catalyst caution. Show each "
+    "name's 200-day-SMA distance and entry-timing state so the demotion is visible."
+)
+_BUCKET_RANK = (
+    "RANK within each bucket: fewer soft-gate warnings first, then strategy score, then "
+    "lower 200-day-SMA distance, then better fundamental coverage."
+)
+
+
+def _batch_task_instruction(directive: bool, n: int, *, is_momentum: bool) -> str:
+    timing = (_BUCKET_ENTRY_TIMING_MOMENTUM + " ") if is_momentum else (
+        "This strategy has NO entry-timing overlay — rank on the value composite, the "
+        "Piotroski F-Score (and its evaluable count), and data coverage; never invent an "
+        "entry-timing state for it. "
+    )
     if directive:
         base = (
             "TASK (personal-use, single-user — directive guidance permitted): You are an "
-            f"expert advisor for the strategy below. {n} candidate(s) passed the screen. For "
-            "each, walk its gates and give a concise directive call (take / pass / size) with "
-            "your confidence; then RANK them best-to-worst for opening a new position now and "
-            "flag any you would avoid and why. Use only the numbers provided here — do not "
-            "compute or invent figures. End with the honesty caveats. This guidance is for the "
-            "single owner of this tool only and must not be redistributed."
+            f"expert advisor for the strategy below. {n} candidate(s) passed the screen. Produce a "
+            "READY ENTER / WATCH recommendation. "
+            f"{_BUCKET_PREGATE} {_BUCKET_EXCLUDE} "
+            "ENTER = passes all ESSENTIAL gates (a skipped PREFERRED gate is allowed but lowers "
+            "rank), no forcing disqualifier, ranks high, and is not dangerously extended above its "
+            "200-day SMA. WATCH = otherwise-clean names that ranked below the Enter cut, are "
+            "materially extended, carry a short-lived-catalyst caution that needs a news check, or "
+            f"are entry-undetermined from thin data. {timing}{_BUCKET_RANK} "
+            "For each ENTER name give entry / stop / target and a risk-per-trade size (capped at "
+            "the 10% position / 25% sector limits), with your confidence and the single biggest "
+            "risk. Use only the numbers provided here — do not compute or invent figures. End with "
+            "the honesty caveats. This guidance is for the single owner of this tool only and must "
+            "not be redistributed."
         )
     else:
         base = (
             "TASK: You are an expert analyst for the strategy below. "
-            f"{n} candidate(s) passed the screen. For each, explain neutrally how it scores against "
-            "the strategy's rules, then compare them as screen matches / candidates for further "
-            "research (not recommendations). Use only the numbers provided here — do not compute or "
-            "invent figures. End with the honesty caveats."
+            f"{n} candidate(s) passed the screen. Classify the list into two research buckets — "
+            "ENTER-candidate (setup-ready for the user's own entry consideration) and WATCH "
+            "(await confirmation) — as screen matches / candidates for further research, not "
+            f"recommendations. {_BUCKET_PREGATE} {_BUCKET_EXCLUDE} "
+            "ENTER-candidate = passes all ESSENTIAL gates (a skipped PREFERRED gate is allowed but "
+            "lowers rank), no forcing disqualifier, ranks high, and is not dangerously extended "
+            "above its 200-day SMA. WATCH = otherwise. "
+            f"{timing}{_BUCKET_RANK} Use only the numbers provided here — do not compute or invent "
+            "figures. End with the honesty caveats."
         )
     return base + "\n\n" + _research_and_summary_instruction(directive, multi=True)
 
@@ -692,7 +735,11 @@ def build_screen_advisor_prompt(
         else "_No candidates matched the screen._"
     )
     sections = [
-        _batch_task_instruction(directive, len(candidates)),
+        _batch_task_instruction(
+            directive,
+            len(candidates),
+            is_momentum=strategy.slug == "midterm_52w_high_momentum",
+        ),
         _strategy_context(strategy, gate_names),
         _run_config_block(screen),
         "## Material input freshness\n"

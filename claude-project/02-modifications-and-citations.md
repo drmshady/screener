@@ -79,6 +79,19 @@ collapsing participation. Deliberately a *smoothed* recent-window measure, not a
 single-day spike, because the 52-week-high anchoring effect actually favors
 quiet underreaction drift — this only screens out clearly fading names.
 
+> **Reconcile with Modification 9's volume component (deliberate, not a bug).**
+> This gate (≥ 0.7× *participation*, smoothed) and the entry-timing
+> `volume_confirmation` component (≥ 1.4× *breakout* surge) measure different
+> things for different reasons. The gate encodes the **base thesis** — George &
+> Hwang drift is *supposed* to be quiet, so a low-volume name is a valid screen
+> match. The entry-timing component encodes a **Minervini breakout** view, where
+> a pivot break wants a volume surge. A clean drift name will therefore pass the
+> gate yet read `not-entry-ready` ("weak-volume breakout") in the overlay — that
+> is **correct and expected**, not a contradiction. Treat the overlay's volume
+> flag on such a name as *timing texture*, never as a reason to fail it: the
+> entry-timing state is a tie-breaker/risk-veto, not a gate (see
+> [00-custom-instructions.md](00-custom-instructions.md) ranking rubric).
+
 ## Modification 8 — Sector-strength gate (currently DISABLED)
 
 **Moskowitz, T. J., & Grinblatt, M. (1999). "Do Industries Explain Momentum?"

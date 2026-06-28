@@ -409,7 +409,24 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
               <AsOfBadge date={screenResult.data_as_of} />
               {supportsAdvisorPrompt(strategySlug) && screenResult.candidates.length > 0 ? (
-                <CopyScreenAdvisorPrompt slug={strategySlug} getRequestBody={buildRequestBody} disabled={loading} />
+                <div className="flex flex-col items-stretch gap-2 sm:items-end">
+                  <CopyScreenAdvisorPrompt slug={strategySlug} getRequestBody={buildRequestBody} disabled={loading} />
+                  {isMomentum ? (
+                    <>
+                      <CopyScreenAdvisorPrompt
+                        slug={strategySlug}
+                        getRequestBody={buildRequestBody}
+                        disabled={loading}
+                        overrideParameters={{ expanded_coverage: true, entry_ready_only: false }}
+                        idleLabel="Copy Project triage prompt (Enter / Watch)"
+                      />
+                      <p className="max-w-xs text-right text-xs text-slate-500">
+                        One click: runs the wider expanded-coverage list and copies an Enter / Watch
+                        prompt ready to paste into the Claude Project.
+                      </p>
+                    </>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>

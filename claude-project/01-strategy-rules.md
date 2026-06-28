@@ -216,5 +216,16 @@ this. Treat "Trending down" signals with heavy skepticism.
 | `entry_volume_ratio_min` | 1.4 | — | Breakout volume ratio floor for volume confirmation (012) |
 | `entry_base_depth_max` | 0.33 | — | Max base depth for the base-depth component (012) |
 | `entry_sma200_extension_max` | 0.40 | — | Max distance above SMA-200 before "extended" (012) |
+
+> **Advisor note on `entry_sma200_extension_max` (0.40).** This threshold is
+> **deliberately loose** — a name can sit **up to 40% above its 200-day SMA** and
+> still read `not_extended = pass`. That is wide enough that names carrying real
+> momentum-crash risk (e.g. +25–35% above the SMA) clear the component. So when
+> ranking an Enter list, **always surface each name's actual SMA-200 distance**
+> (`dist_above_sma_200`) explicitly — do not rely on the binary `not_extended`
+> pass — and **demote the most-extended names within the Enter bucket** (this is
+> the entry-timing risk-veto at work). Lowering the 0.40 default itself is a
+> *code/default* change that must go through its own A/B on real data, not a doc
+> edit — flag it as a candidate, don't assume it.
 | `entry_climax_advance_min` | 0.25 | — | Trailing advance that, after an ≥8-week trend, triggers the climax-top disqualifier (012) |
 | `entry_huge_gap_threshold` | 0.05 | — | Gap above pivot that triggers the huge-gap disqualifier (012) |

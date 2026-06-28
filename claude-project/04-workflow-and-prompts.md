@@ -197,6 +197,93 @@ momentum score, and when it would shrink my position. Use the strategy's
 actual parameters.
 ```
 
+## Template E — "Scan this list → Enter / Watch" (momentum)
+
+Use this when you paste a **whole screen** (not one name) and want it ranked
+into two buckets. The advisor must follow the **ranking rubric** in
+[00-custom-instructions.md](00-custom-instructions.md) — entry-timing is a
+**tie-breaker / risk-veto, not a gate**, so a clean George & Hwang drift name
+that is below its pivot or "weak-volume" still belongs in **Enter**.
+
+> **Shortcut (momentum):** the app has a one-click **"Copy Project triage prompt
+> (Enter / Watch)"** button on the screen page. It runs the wider
+> *expanded-coverage* list (preferred-gate misses retained + demoted, Watch names
+> kept) and copies a prompt that already carries this Enter/Watch task framing —
+> paste it straight into the Project. The manual template below is the fallback
+> when you've hand-built a list or pasted from elsewhere.
+
+**Step 0 — pre-bucket checklist (gate the WHOLE list before bucketing).** The
+advisor must confirm these first and refuse to produce a confident Enter list
+while any is open:
+
+1. **Regime verified?** If the market regime is **Unfavorable** (SPY below its
+   200-day SMA → the Faber master switch suppresses *new* entries) or
+   **Unknown/unverified**, say so up front; everything is at most "Watch" until
+   regime is confirmed Favorable/Neutral.
+2. **Halal/Shariah freshness re-checked?** If the compliance source
+   (`halal_terminal` et al.) is **stale**, compliance can't be trusted — names
+   must be re-verified before any Enter call. Flag it; don't silently bucket.
+3. **Corporate-action / data-integrity scan done?** See standing excludes below.
+
+**Standing excludes (drop from BOTH buckets, never just demote):**
+
+- Any candidate carrying a **DATA INTEGRITY WARNING** → out.
+- Any **stale corporate-action / pinned-price signature** (merger-arb, split/
+  dividend mismatch, share-class confusion) → out.
+- `data_suspect = true` → out of Enter (the app already sinks these below all
+  clean names; treat them as exclude, not "low Enter").
+
+**ENTER** = passes all **essential** gates (no hard fail; in `expanded_coverage`
+a *skipped preferred* gate is OK but lowers rank) **AND** no **forcing
+disqualifier** fired (climax-top, huge-gap) **AND** ranks high **AND** is not
+dangerously **extended** above its SMA-200. Entry-timing only **demotes within
+Enter** (extended / climax / short-lived-catalyst names sink); it never evicts a
+clean drift name.
+
+**WATCH** = clean essential gates but **one of**: a forcing disqualifier fired,
+the name is materially **extended** above SMA-200, a non-forcing
+**short-lived-catalyst** caution needs a news check first, `entry-undetermined`
+from thin data, or it simply **ranks below the Enter cut**.
+
+**Ranking order inside each bucket** (mirror the app's own sort, then add the
+entry-timing veto):
+
+1. cleanliness first — **fewer soft-gate warnings** (a clean name beats a
+   higher-scoring demoted one);
+2. then **strategy score** (`return_12_1 × vol_scalar / (1 + dist_to_high)`),
+   highest first;
+3. tie-break on **lower `dist_above_sma_200`** (less momentum-crash risk),
+   then on better fundamental coverage (fewer fail-open / missing-data gates),
+   then ticker for stability.
+
+Always print each Enter name's **SMA-200 distance** and **entry-timing state**
+in the table so the demotion logic is visible, not hidden.
+
+```
+Strategy: midterm_52w_high_momentum. As-of: <date>. Regime: <regime>.
+Halal source freshness: <fresh / stale as of <date>>.
+
+Here is my full screen (one row per candidate). Columns:
+ticker | sector | score | dist_to_high | dist_above_sma_200 | warnings/skipped_gates |
+entry_timing.state | disqualifiers fired | data_integrity_warning? | data_suspect?
+<paste rows>
+
+Rank this into ENTER and WATCH using the Project rubric:
+- First run the pre-bucket checklist (regime, halal freshness, data-integrity /
+  corporate-action). If regime is Unfavorable/Unknown or halal is stale, tell me
+  and cap everything at Watch until I resolve it.
+- Drop any DATA INTEGRITY WARNING / stale corporate-action / data_suspect name.
+- ENTER = clean essential gates + no forcing disqualifier + high rank + not
+  dangerously extended. Entry-timing only DEMOTES extended/climax/short-lived-
+  catalyst names within Enter — do NOT exclude a clean below-pivot drift name.
+- Rank within each bucket: fewer warnings, then score, then lower SMA-200
+  distance. Show SMA-200 distance and entry-timing state per row.
+- For the top few ENTER names, SEARCH THE WEB for recent news / catalysts and
+  flag post-catalyst pullback risk; cite and date sources; never overwrite a
+  computed gate.
+Give the survivorship caveat once at the end. This is my decision, not yours.
+```
+
 ## Good habits
 
 - **Paste the as-of date every time.** A mid-term call on week-old data is a
