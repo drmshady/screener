@@ -14,7 +14,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from backend.src.models.strategy import Strategy
+from backend.src.models.strategy import Strategy, StrategyParameter
 from backend.src.screening.engine import _screen_from_universe
 from backend.src.screening.gate_tiers import GATE_TIERS, gate_tier, gate_tiers
 from backend.src.strategies import midterm_52w_high_momentum as midterm
@@ -227,6 +227,77 @@ def test_expanded_coverage_retains_preferred_trend_failure(_no_reference_thresho
     down = tiered[tiered["ticker"] == "DOWN"].iloc[0]
     assert "Trend (above 200-day SMA)" in list(down["warnings"])
     assert int(down["warning_count"]) >= 1
+
+
+def _entry_row(ticker, *, ret, entry_ready):
+    """A momentum universe row carrying the entry-timing inputs, near its high and
+    above its SMA-200 so it survives the strategy gates. `entry_ready` toggles the
+    breakout-volume confirmation only, flipping the entry-timing STATE without
+    changing the strategy score (which is driven by `ret`)."""
+    base = _rules_row(ticker, "Technology", 100.0, 101.0, ret, 10_000_000, 0.3, 2.0, 90.0, 0.5)
+    base.update(
+        {
+            "pivot": 98.0,
+            "base_type": "flat",
+            "base_length_weeks": 6.0,
+            "base_depth": 0.18,
+            # The only differentiator: confirming volume (>=1.4) => entry-ready.
+            "breakout_volume_ratio": 1.5 if entry_ready else 1.0,
+            "dist_above_pivot": 0.02,
+            "dist_above_sma_200": 0.11,
+            "climax_advance": 0.10,
+            "prior_trend_weeks": 10.0,
+            "gap_above_pivot": 0.0,
+            "recent_short_lived_catalyst": False,
+        }
+    )
+    return base
+
+
+def test_entry_ready_only_filters_before_per_sector_cap(_no_reference_thresholds, monkeypatch):
+    # One sector, cap of 1 slot. HIGH scores higher but is NOT entry-ready; LOW
+    # scores lower but IS entry-ready. Without the pre-cap filter the cap would
+    # award the slot to HIGH and the downstream entry-ready filter would then drop
+    # it, yielding ZERO entry-ready names — fewer than the narrow run surfaces.
+    monkeypatch.setitem(
+        midterm.PARAMETERS,
+        "max_per_sector",
+        StrategyParameter(default=1, type="int", description="Max candidates per sector"),
+    )
+    universe = pd.DataFrame(
+        [
+            _entry_row("HIGH", ret=0.50, entry_ready=False),
+            _entry_row("LOW", ret=0.30, entry_ready=True),
+        ]
+    )
+
+    expanded = universe.copy()
+    expanded.attrs["expanded_coverage"] = True
+    expanded.attrs["entry_ready_only"] = True
+    result = midterm.rules(expanded)
+    # The entry-ready name wins the single slot; the higher-scoring not-ready name
+    # never evicts it.
+    assert result["ticker"].tolist() == ["LOW"]
+
+
+def test_expanded_without_entry_ready_only_keeps_top_scored(_no_reference_thresholds, monkeypatch):
+    # Same fixture, but entry_ready_only OFF: behaviour is unchanged — the cap
+    # awards its single slot to the highest-scoring name regardless of readiness.
+    monkeypatch.setitem(
+        midterm.PARAMETERS,
+        "max_per_sector",
+        StrategyParameter(default=1, type="int", description="Max candidates per sector"),
+    )
+    universe = pd.DataFrame(
+        [
+            _entry_row("HIGH", ret=0.50, entry_ready=False),
+            _entry_row("LOW", ret=0.30, entry_ready=True),
+        ]
+    )
+    expanded = universe.copy()
+    expanded.attrs["expanded_coverage"] = True
+    result = midterm.rules(expanded)
+    assert result["ticker"].tolist() == ["HIGH"]
 
 
 def test_proximity_essential_gate_excludes_regardless_of_expanded(_no_reference_thresholds):

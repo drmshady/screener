@@ -22,6 +22,7 @@ from ..screening.integrity.invariants import (
     value_domain_realized_vol_floor,
     value_domain_return_plausible,
 )
+from ..screening.entry_timing import classify_entry_timing, thresholds_from_flags
 from ._helpers.quality import gross_profitability_mask, passes_quality_screen
 from ._helpers.reference_thresholds import load_reference_thresholds
 from ._helpers.sector_rank import rank_within_sector
@@ -875,6 +876,25 @@ def rules(universe_df: pd.DataFrame) -> pd.DataFrame:
         )
     else:
         matched["score"] = 1.0 / (1.0 + matched["dist_to_high"])
+
+    # 5b. Entry-ready pre-filter (feature 012 US2). When this run requests
+    # entry-ready-only, drop not-entry-ready names BEFORE the per-sector cap so
+    # entry-ready candidates compete for the max_per_sector slots only against one
+    # another. Otherwise a higher-scoring but not-entry-ready name could take a
+    # slot and then be removed by the engine's downstream entry-ready filter,
+    # shrinking the entry-ready list below what the narrow (hard-mode) run shows —
+    # the eviction this guards against. Fires only when the toggle is on, so the
+    # default screen and the no-filter expanded screen stay byte-identical.
+    if bool(getattr(df, "attrs", {}).get("entry_ready_only")) and not matched.empty:
+        thresholds = thresholds_from_flags()
+        is_ready = matched.apply(
+            lambda r: classify_entry_timing(r.to_dict(), thresholds=thresholds).state
+            == "entry_ready",
+            axis=1,
+        )
+        matched = matched[is_ready]
+        if matched.empty:
+            return _with_notes(matched)
 
     # 6. Sector-relative ranking
     matched = rank_within_sector(

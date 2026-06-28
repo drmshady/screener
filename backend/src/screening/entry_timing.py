@@ -12,6 +12,8 @@ from backend.src.models.strategy import (
     EntryTimingClassification,
 )
 
+from ..lib import flags
+
 
 @dataclass(frozen=True)
 class EntryThresholds:
@@ -25,6 +27,24 @@ class EntryThresholds:
     climax_advance_min: float = 0.25
     climax_prior_trend_weeks: float = 8.0
     huge_gap_threshold: float = 0.05
+
+
+def thresholds_from_flags() -> EntryThresholds:
+    """Build the entry-timing thresholds from the live flag values — the single
+    source of truth shared by the engine, the strategy's pre-cap entry-ready
+    filter, and the single-ticker analyze path so they classify identically."""
+    return EntryThresholds(
+        pivot_max_extension=flags.entry_pivot_max_extension(),
+        volume_ratio_min=flags.entry_volume_ratio_min(),
+        volume_ratio_preferred=flags.entry_volume_ratio_preferred(),
+        flat_min_weeks=flags.entry_flat_base_min_weeks(),
+        cup_min_weeks=flags.entry_cup_base_min_weeks(),
+        base_depth_max=flags.entry_base_depth_max(),
+        sma200_extension_max=flags.entry_sma200_extension_max(),
+        climax_advance_min=flags.entry_climax_advance_min(),
+        climax_prior_trend_weeks=flags.entry_climax_prior_trend_weeks(),
+        huge_gap_threshold=flags.entry_huge_gap_threshold(),
+    )
 
 
 def _float(value: Any) -> float | None:

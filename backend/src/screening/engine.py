@@ -31,7 +31,7 @@ from ..indicators.valuation import (
 from ..lib import flags
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..models.strategy import Candidate, DataIntegrityWarning, ScreenResult, SkippedGate
-from .entry_timing import EntryThresholds, classify_entry_timing
+from .entry_timing import EntryThresholds, classify_entry_timing, thresholds_from_flags
 from .gate_tiers import gate_tier
 from .integrity.engine import evaluate_contract
 from .regime import market_regime, strategy_is_regime_sensitive
@@ -1324,18 +1324,7 @@ def _screen_from_universe(
     Shariah filtering, candidate rows. Split out of run_strategy so the matrix
     runner can reuse one snapshot across four variants (T003)."""
     def _entry_thresholds() -> EntryThresholds:
-        return EntryThresholds(
-            pivot_max_extension=flags.entry_pivot_max_extension(),
-            volume_ratio_min=flags.entry_volume_ratio_min(),
-            volume_ratio_preferred=flags.entry_volume_ratio_preferred(),
-            flat_min_weeks=flags.entry_flat_base_min_weeks(),
-            cup_min_weeks=flags.entry_cup_base_min_weeks(),
-            base_depth_max=flags.entry_base_depth_max(),
-            sma200_extension_max=flags.entry_sma200_extension_max(),
-            climax_advance_min=flags.entry_climax_advance_min(),
-            climax_prior_trend_weeks=flags.entry_climax_prior_trend_weeks(),
-            huge_gap_threshold=flags.entry_huge_gap_threshold(),
-        )
+        return thresholds_from_flags()
 
     # Regime master switch (Faber 2007 / T108a): for strategies that mark
     # downtrends Unfavorable, take no NEW entries while SPY is below its 200-day
@@ -1428,6 +1417,16 @@ def _screen_from_universe(
                 benchmark = None
             if benchmark is not None:
                 universe.attrs["benchmark_return_12_1"] = benchmark
+        # Feature 012 US2 fix: forward the entry-ready-only toggle so rules() can
+        # apply the entry-ready filter BEFORE its per-sector cap (a not-entry-ready
+        # name must not evict an entry-ready one and then be dropped downstream).
+        # The engine's post-rules entry-ready filter below stays as an idempotent
+        # safety net for any path that doesn't forward the attr.
+        if (
+            strategy_slug == "midterm_52w_high_momentum"
+            and bool(parameters_snapshot.get("entry_ready_only", False))
+        ):
+            universe.attrs["entry_ready_only"] = True
         results = strategy.rules(universe)
         data_notes.extend(results.attrs.get("gates_skipped", []))
         # Feature 008 (T013): validate every returned candidate against the
