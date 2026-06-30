@@ -16,7 +16,9 @@ import {
   fetchApi,
   fetchHoldings,
   getPortfolioState,
+  putPortfolioState,
 } from '@/lib/api';
+import { portfolioSyncPayload } from '@/components/PortfolioSync';
 import { COPY } from '@/lib/copy';
 import { formatMoney } from '@/lib/format';
 import { Holding, Transaction, useAppStore } from '@/lib/store';
@@ -128,6 +130,15 @@ function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+/** Within this fraction of the stop/target, a holding is flagged as "near" its level. */
+const NEAR_LEVEL_PCT = 0.03;
+
+interface HoldingAlert {
+  ticker: string;
+  severity: 'high' | 'medium';
+  message: string;
+}
+
 function levelStatusLabel(status: LevelBlock['status']) {
   if (status === 'stop_breached') return 'Stop breached';
   if (status === 'target_reached') return 'Target reached';
@@ -225,6 +236,7 @@ export default function PortfolioPage() {
   const removeHolding = useAppStore((state) => state.removeHolding);
   const acknowledgeLocalStorageWarning = useAppStore((state) => state.acknowledgeLocalStorageWarning);
   const setTransactions = useAppStore((s) => s.setTransactions);
+  const removeTransactionsForTicker = useAppStore((s) => s.removeTransactionsForTicker);
   const storeTransactions = useAppStore((s) => s.transactions);
   const storeSheetId = useAppStore((s) => s.sheet_id);
   const storeSheetRange = useAppStore((s) => s.sheet_range);
@@ -270,6 +282,7 @@ export default function PortfolioPage() {
   } | null>(null);
   const [importedDetailsLoading, setImportedDetailsLoading] = useState(false);
   const [importedDetailsError, setImportedDetailsError] = useState<string | null>(null);
+  const [removingTicker, setRemovingTicker] = useState<string | null>(null);
   const holdingsKey = useMemo(
     () => portfolio.holdings.map((holding) => holding.ticker).sort().join(','),
     [portfolio.holdings],
@@ -341,42 +354,68 @@ export default function PortfolioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdingsKey, settings.default_strategy_slug]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadImportedDetails() {
-      if (!storeTransactions.length) {
-        setImportedDetails({});
-        setImportedAsOf(null);
-        setImportedTotals(null);
-        return;
-      }
-      setImportedDetailsLoading(true);
-      setImportedDetailsError(null);
-      try {
-        const response = await fetchHoldings({
-          total_capital: String(portfolio.total_capital || 1),
-          strategy_slug: settings.default_strategy_slug,
-        });
-        if (!cancelled) {
-          setImportedDetails(Object.fromEntries(response.holdings.map((holding) => [holding.ticker, holding])));
-          setImportedAsOf(response.data_as_of);
-          setImportedTotals(response.totals);
-        }
-      } catch {
-        if (!cancelled) {
-          setImportedDetailsError('Imported holding levels are unavailable.');
-        }
-      } finally {
-        if (!cancelled) {
-          setImportedDetailsLoading(false);
-        }
-      }
+  // Fetch the purchase-anchored levels / sizing for the imported holdings. Reads
+  // the live transaction count from the store so it stays correct when invoked
+  // imperatively right after a removal (the render closure may still be stale).
+  const loadHoldings = useCallback(async () => {
+    if (!useAppStore.getState().transactions.length) {
+      setImportedDetails({});
+      setImportedAsOf(null);
+      setImportedTotals(null);
+      return;
     }
-    loadImportedDetails();
-    return () => {
-      cancelled = true;
-    };
-  }, [storeTransactions, portfolio.total_capital, settings.default_strategy_slug]);
+    setImportedDetailsLoading(true);
+    setImportedDetailsError(null);
+    try {
+      const response = await fetchHoldings({
+        total_capital: String(portfolio.total_capital || 1),
+        strategy_slug: settings.default_strategy_slug,
+      });
+      setImportedDetails(Object.fromEntries(response.holdings.map((holding) => [holding.ticker, holding])));
+      setImportedAsOf(response.data_as_of);
+      setImportedTotals(response.totals);
+    } catch {
+      setImportedDetailsError('Imported holding levels are unavailable.');
+    } finally {
+      setImportedDetailsLoading(false);
+    }
+  }, [portfolio.total_capital, settings.default_strategy_slug]);
+
+  useEffect(() => {
+    // Defer out of the synchronous effect body (loadHoldings may setState
+    // immediately when the ledger is empty) to avoid cascading renders.
+    const id = window.setTimeout(() => {
+      loadHoldings();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [loadHoldings, storeTransactions]);
+
+  // Remove one ticker's imported transactions (and its derived holding). The
+  // local ledger is the source of truth; we persist it immediately so the
+  // holdings re-fetch reads the post-removal blob, then refresh totals/levels.
+  const handleRemoveImportedHolding = useCallback(
+    async (ticker: string) => {
+      if (typeof window !== 'undefined') {
+        const confirmed = window.confirm(
+          `Remove ${ticker} from your imported holdings? This deletes its imported transactions from this portfolio. Re-import from your sheet to restore them.`,
+        );
+        if (!confirmed) return;
+      }
+      setRemovingTicker(ticker);
+      removeTransactionsForTicker(ticker);
+      try {
+        await putPortfolioState(portfolioSyncPayload(useAppStore.getState()));
+      } catch {
+        // Local store is already updated; PortfolioSync will retry the push.
+      }
+      try {
+        await loadHoldings();
+      } finally {
+        setRemovingTicker(null);
+      }
+    },
+    [removeTransactionsForTicker, loadHoldings],
+  );
 
   const derived = useMemo(() => {
     const holdings = portfolio.holdings.map((holding) => {
@@ -431,6 +470,44 @@ export default function PortfolioPage() {
     }).length;
     return { holdings, totalInvested, cash, sectorExposure, flags, nonCompliant, marked };
   }, [portfolio, quotes, settings, statuses]);
+
+  // Surface holdings that have reached/passed — or are near — their current-condition
+  // stop or target. Descriptive only (no directive language, FR-020).
+  const holdingAlerts = useMemo<HoldingAlert[]>(() => {
+    const alerts: HoldingAlert[] = [];
+    for (const h of importedHoldings) {
+      if (h.status !== 'open') continue;
+      const detail = importedDetails[h.ticker];
+      const block = detail?.levels?.current_condition;
+      if (!detail?.priceable || !block || block.levels_state !== 'ok') continue;
+      const priceLabel = detail.current_price ? formatMoney(detail.current_price, h.ticker) : null;
+      const suffix = priceLabel ? ` (now ${priceLabel})` : '';
+      if (block.status === 'stop_breached') {
+        alerts.push({ ticker: h.ticker, severity: 'high', message: `${h.ticker} has passed its stop level${suffix}.` });
+        continue;
+      }
+      if (block.status === 'target_reached') {
+        alerts.push({ ticker: h.ticker, severity: 'high', message: `${h.ticker} has reached its target level${suffix}.` });
+        continue;
+      }
+      const stopDist = block.distance_to_stop_pct;
+      const targetDist = block.distance_to_target_pct;
+      if (stopDist !== null && stopDist !== undefined && Math.abs(stopDist) <= NEAR_LEVEL_PCT) {
+        alerts.push({
+          ticker: h.ticker,
+          severity: 'medium',
+          message: `${h.ticker} is near its stop level (${percent(Math.abs(stopDist))} away).`,
+        });
+      } else if (targetDist !== null && targetDist !== undefined && targetDist > 0 && targetDist <= NEAR_LEVEL_PCT) {
+        alerts.push({
+          ticker: h.ticker,
+          severity: 'medium',
+          message: `${h.ticker} is near its target level (${percent(targetDist)} away).`,
+        });
+      }
+    }
+    return alerts;
+  }, [importedHoldings, importedDetails]);
 
   function updateForm(field: keyof HoldingForm, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -507,6 +584,23 @@ export default function PortfolioPage() {
             Derived from {storeTransactions.length} imported transaction{storeTransactions.length !== 1 ? 's' : ''}.
             {importedDetailsLoading ? ' Level details are refreshing.' : ' Level details are recomputed from the latest snapshot.'}
           </p>
+          {holdingAlerts.length > 0 ? (
+            <div aria-label="Holding level alerts" className="space-y-2">
+              {holdingAlerts.map((alert) => (
+                <div
+                  className={
+                    alert.severity === 'high'
+                      ? 'border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-900'
+                      : 'border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900'
+                  }
+                  key={`${alert.ticker}-${alert.message}`}
+                  role="alert"
+                >
+                  {alert.message}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {importedTotals ? (
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="border border-gray-200 p-3">
@@ -538,6 +632,7 @@ export default function PortfolioPage() {
                   <th className="px-4 py-3">Current condition</th>
                   <th className="px-4 py-3">Sizing & risk</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -582,6 +677,16 @@ export default function PortfolioPage() {
                         ) : (
                           <span className="text-amber-800">Anomalous - net quantity is negative</span>
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          className="border border-gray-300 px-3 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                          disabled={removingTicker === h.ticker}
+                          onClick={() => handleRemoveImportedHolding(h.ticker)}
+                          type="button"
+                        >
+                          {removingTicker === h.ticker ? 'Removing…' : 'Remove'}
+                        </button>
                       </td>
                     </tr>
                   );

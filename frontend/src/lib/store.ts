@@ -116,6 +116,8 @@ interface AppState extends StoredState {
   /** Feature 013: persist imported transactions from POST /portfolio/import. */
   setTransactions: (transactions: Transaction[], sheetId?: string | null, sheetRange?: string | null) => void;
   clearTransactions: () => void;
+  /** Feature 013: drop all imported transactions for one ticker (portfolio removal). */
+  removeTransactionsForTicker: (ticker: string) => void;
 }
 
 function nowIso() {
@@ -428,6 +430,13 @@ export const useAppStore = create<AppState>()(
       setTransactions: (transactions, sheetId = null, sheetRange = null) =>
         set(() => ({ transactions, sheet_id: sheetId ?? null, sheet_range: sheetRange ?? null })),
       clearTransactions: () => set(() => ({ transactions: [], sheet_id: null, sheet_range: null })),
+      removeTransactionsForTicker: (ticker) =>
+        set((state) => {
+          const symbol = tickerValue(ticker);
+          return {
+            transactions: state.transactions.filter((t) => t.ticker.toUpperCase() !== symbol),
+          };
+        }),
       exportData: () => JSON.stringify(exportSnapshot(get()), null, 2),
       importData: (payload) => {
         try {
