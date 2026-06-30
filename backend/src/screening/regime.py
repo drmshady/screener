@@ -24,6 +24,15 @@ from ..data.prices import YFinancePriceProvider
 from ..indicators.moving_averages import calculate_sma
 
 _STOOQ_ROOT = Path(__file__).resolve().parents[2] / "data" / "prices" / "stooq"
+# Daily-baked SPY history. The hosted image excludes the raw Stooq archive
+# (backend/.dockerignore) and SPY is not in the screening parquet, so without
+# this the host has no offline SPY and the regime gate falls to Unknown whenever
+# request-time yfinance is unreachable. The daily refresh (scripts/ingest_daily.py)
+# rewrites this file every run and the Dockerfile bakes the whole data/regime dir,
+# so the host always has a recent SPY series to compute the 200-day SMA from.
+_SPY_HISTORY_PARQUET = (
+    Path(__file__).resolve().parents[2] / "data" / "regime" / "spy_history.parquet"
+)
 
 
 def _spy_from_stooq() -> pd.DataFrame | None:
@@ -42,9 +51,62 @@ def _spy_from_stooq() -> pd.DataFrame | None:
     return df.dropna(subset=["as_of_date"])[["as_of_date", "close"]].assign(ticker="SPY")
 
 
+def _spy_from_baked(path: Path | str | None = None) -> pd.DataFrame | None:
+    """SPY history from the daily-baked parquet (no network, deterministic)."""
+    target = Path(path) if path is not None else _SPY_HISTORY_PARQUET
+    if not target.exists():
+        return None
+    try:
+        df = pd.read_parquet(target)
+    except Exception:
+        return None
+    if "as_of_date" not in df or "close" not in df or df.empty:
+        return None
+    return df[["as_of_date", "close"]].assign(ticker="SPY")
+
+
+def refresh_spy_history(
+    *,
+    history_days: int = 900,
+    provider: "YFinancePriceProvider | None" = None,
+    path: Path | str | None = None,
+) -> int:
+    """Fetch SPY EOD and persist it to the daily-baked regime parquet.
+
+    Called by the daily refresh (scripts/ingest_daily.py), which runs in CI / locally
+    where yfinance is reachable, so the host never has to fetch SPY at request time.
+    Fail-soft: an empty/failed fetch leaves any existing file untouched (returns 0)
+    rather than clobbering a good series with nothing.
+    """
+    target = Path(path) if path is not None else _SPY_HISTORY_PARQUET
+    end = date.today() + timedelta(days=1)
+    start = end - timedelta(days=int(history_days))
+    prov = provider or YFinancePriceProvider()
+    try:
+        df = prov.fetch_ohlcv(["SPY"], start_date=start, end_date=end)
+    except Exception:
+        df = None
+    if df is None or df.empty or "as_of_date" not in df or "close" not in df:
+        return 0
+    out = (
+        df[["as_of_date", "close"]]
+        .dropna(subset=["as_of_date", "close"])
+        .sort_values("as_of_date")
+        .reset_index(drop=True)
+    )
+    if out.empty:
+        return 0
+    out["as_of_date"] = pd.to_datetime(out["as_of_date"])
+    out = out.assign(ticker="SPY")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(target, index=False)
+    return len(out)
+
+
 def _load_spy(as_of_date: str | None, sma_length: int) -> tuple[pd.DataFrame | None, str]:
-    # Prefer current EOD from yfinance; fall back to the local Stooq archive when
-    # yfinance is unavailable/rate-limited so the gate still computes a real regime.
+    # Prefer current EOD from yfinance; fall back to the daily-baked SPY parquet
+    # (the hosted offline source) and then the local Stooq archive, so the gate
+    # still computes a real regime when yfinance is unavailable/rate-limited.
     end = (pd.Timestamp(as_of_date).date() if as_of_date else date.today()) + timedelta(days=1)
     start = end - timedelta(days=int(sma_length * 2.2) + 60)
     try:
@@ -53,6 +115,9 @@ def _load_spy(as_of_date: str | None, sma_length: int) -> tuple[pd.DataFrame | N
             return df, "yfinance"
     except Exception:
         pass
+    baked = _spy_from_baked()
+    if baked is not None and not baked.empty:
+        return baked, "baked(daily)"
     stooq = _spy_from_stooq()
     if stooq is not None and not stooq.empty:
         return stooq, "stooq(local)"

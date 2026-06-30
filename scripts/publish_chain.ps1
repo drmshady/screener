@@ -161,6 +161,12 @@ Write-Host "manifest.json last written: $((Get-Item $manifestPath).LastWriteTime
 Select-String -Path $manifestPath -Pattern 'data_as_of' |
     ForEach-Object { Write-Host ('  ' + $_.Line.Trim()) }
 
+# Non-fatal compliance-deadline heads-up: warn (loudly, into the CI step summary)
+# when the Halal Terminal source is within its 90-day deadline or already past it,
+# so the owner re-runs the refresh before the hosted universe bakes stale. Never
+# a publish gate -- stale compliance is a warning, not a corrupt snapshot.
+RunPy @('scripts/check_data_freshness.py')
+
 # --- 3. Data-integrity harness (008) ----------------------------------------
 Step 'Data-integrity harness'
 $asOf = Get-Date -Format 'yyyy-MM-dd'

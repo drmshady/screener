@@ -10,7 +10,7 @@ from backend.src.data.shariah_halal_terminal import (
     seed_halal_terminal_results,
 )
 from backend.src.data.shariah_sources import load_manifest
-from backend.src.shariah.refresh_cadence import should_refresh
+from backend.src.shariah.refresh_cadence import freshness_status, should_refresh
 
 
 NOW = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
@@ -111,6 +111,29 @@ def test_simulated_year_refreshes_about_quarterly():
             last_success = now
 
     assert refreshes <= 4
+
+
+def test_freshness_status_fresh_due_soon_and_stale_boundaries():
+    # Well inside the window -> fresh.
+    fresh = freshness_status(NOW, NOW - timedelta(days=40), interval_days=90, warn_within_days=14)
+    assert fresh.status == "fresh"
+
+    # Within the warning window of the deadline -> due_soon.
+    due = freshness_status(NOW, NOW - timedelta(days=80), interval_days=90, warn_within_days=14)
+    assert due.status == "due_soon"
+    assert due.days_remaining == pytest.approx(10.0)
+
+    # Past the deadline -> stale.
+    stale = freshness_status(NOW, NOW - timedelta(days=95), interval_days=90, warn_within_days=14)
+    assert stale.status == "stale"
+
+    # No timestamp at all -> stale.
+    assert freshness_status(NOW, None).status == "stale"
+
+
+def test_freshness_status_is_deterministic():
+    kwargs = {"now": NOW, "source_as_of": NOW - timedelta(days=85), "interval_days": 90}
+    assert freshness_status(**kwargs) == freshness_status(**kwargs)
 
 
 def test_bulk_screen_stale_without_key_reuses_cache_and_records_warning(tmp_path, monkeypatch):

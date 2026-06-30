@@ -24,6 +24,7 @@ from backend.src.screening.engine import (
     _compliant_universe,
     run_strategy,
 )
+from backend.src.screening.regime import refresh_spy_history
 from backend.src.shariah.lookup import (
     KNOWN_CONFIGURABLE_SOURCES,
     normalize_shariah_overrides,
@@ -64,6 +65,25 @@ def _update_manifest(row_count: int, tickers: list[str]) -> None:
         "refresh_interval_days": 7,
         "source_url": "https://finance.yahoo.com + SEC EDGAR local cache",
         "tickers": tickers,
+    }
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def _record_spy_history_manifest(row_count: int) -> None:
+    """Record the daily-baked SPY regime series freshness in the manifest."""
+    manifest = (
+        json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        if MANIFEST_PATH.exists()
+        else {"sources": {}}
+    )
+    manifest.setdefault("sources", {})["spy_regime_history"] = {
+        "kind": "regime",
+        "source_as_of": utc_now_iso(),
+        "refresh_interval_days": 1,
+        "source_url": "https://finance.yahoo.com",
+        "last_row_count": row_count,
+        "notes": "Daily-baked SPY EOD series for the Faber 2007 regime master "
+        "switch; the hosted image's only offline SPY source.",
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -200,6 +220,21 @@ def main() -> None:
     print(
         f"Warmed price/profile caches for {len(warm_tickers)} tickers; fetched {len(prices)} new OHLCV rows"
     )
+
+    # 3b. Refresh the daily-baked SPY series so the regime master switch (Faber
+    #     2007) computes on the host without request-time yfinance. The hosted
+    #     image excludes the raw Stooq archive, so this baked parquet is the only
+    #     offline SPY source — without it the regime gate falls to Unknown.
+    spy_rows = refresh_spy_history()
+    if spy_rows:
+        _record_spy_history_manifest(spy_rows)
+        print(f"Refreshed daily-baked SPY regime history: {spy_rows} bars")
+    else:
+        print(
+            "WARNING: SPY regime history NOT refreshed (yfinance returned no SPY bars); "
+            "kept the prior baked series. The hosted regime gate relies on this file."
+        )
+
     _warm_strategy_snapshots()
 
     # 4. Events stay scoped to the base set — per-ticker EDGAR/earnings refresh over
