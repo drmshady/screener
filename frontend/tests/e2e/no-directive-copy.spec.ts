@@ -173,6 +173,112 @@ test('no directive trading language on the imported-holdings sizing & breach/tar
   await assertNoDirectiveCopy(page);
 });
 
+test('no directive trading language in the held-position advisor-prompt preview', async ({ page }) => {
+  await isolatePortfolioState(page);
+  await seedStorage(page, {
+    portfolio: {
+      schema_version: 3,
+      total_capital: 100000,
+      holdings: [],
+      created_at: '2026-06-11T00:00:00Z',
+      updated_at: '2026-06-11T00:00:00Z',
+      local_storage_notice_acknowledged: true,
+    },
+    watchlist: [],
+    settings: SETTINGS,
+    transactions: [
+      {
+        id: 'tx-1',
+        ticker: 'TESTCO',
+        action: 'buy',
+        quantity: '10',
+        price: '100.00',
+        trade_date: '2025-01-15',
+        fees: '1.00',
+        note: null,
+        source_row: 2,
+      },
+    ],
+    sheet_id: 'sheet-abc',
+    sheet_range: 'Transactions!A1:I',
+  });
+
+  await page.route('**/portfolio/holdings', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        holdings: [
+          {
+            ticker: 'TESTCO',
+            net_quantity: '10',
+            avg_cost: '100.00',
+            cost_basis: '1000.00',
+            earliest_buy_date: '2025-01-15',
+            most_recent_buy_date: '2025-01-15',
+            realized_pl: '0.00',
+            status: 'open',
+            priceable: true,
+            sector: 'Technology',
+            current_price: '110.00',
+            unrealized_pl: '100.00',
+            unrealized_pl_pct: 0.1,
+            data_notes: [],
+            data_as_of: '2026-06-11T21:00:00Z',
+            levels: {
+              original_plan: levelBlock('target_reached'),
+              current_condition: levelBlock('target_reached'),
+            },
+            risk: {
+              recommended_shares: 8,
+              recommended_value: '880.00',
+              actual_shares: '10',
+              actual_value: '1100.00',
+              actual_capital_at_risk: '180.00',
+              actual_capital_at_risk_pct: 0.0018,
+              per_trade_risk_budget: '150.00',
+              over_risk: true,
+              binding_constraint: 'per_trade_budget',
+              sizing_reasoning: 'Bounded by the per-trade risk budget.',
+              fail_open: false,
+            },
+          },
+        ],
+        totals: {
+          total_invested: '1100.00',
+          total_capital_at_risk: '180.00',
+          total_capital_at_risk_pct: 0.0018,
+        },
+        data_as_of: '2026-06-11T21:00:00Z',
+        disclaimer: 'Fixture disclaimer',
+      }),
+    });
+  });
+
+  // Non-directive prompt — the preview is NOT exempt from the lint, so its copy
+  // must stay directive-free just like app chrome.
+  await page.route('**/portfolio/holdings/advisor-prompt', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        strategy: 'midterm_52w_high_momentum',
+        holding_count: 1,
+        personal_use_directive: false,
+        prompt:
+          'TASK: review the positions the user ALREADY HOLDS.\n\n## Held position — TESTCO (Technology)\n- Suggested size: 8 shares vs actual 10 shares\n- Capital at risk: 180.00\n\n## Honesty & limitations\n- Fixture disclaimer',
+        data_as_of: '2026-06-11T21:00:00Z',
+        disclaimer: 'Fixture disclaimer',
+      }),
+    });
+  });
+
+  await page.goto('/portfolio');
+  await expect(page.getByText('Imported Holdings')).toBeVisible();
+  await page.getByRole('button', { name: 'Copy portfolio prompt' }).click();
+  await expect(page.getByTestId('holding-advisor-prompt-preview')).toBeVisible();
+
+  await assertNoDirectiveCopy(page);
+});
+
 function analyzeBody(ticker: string, ready: boolean) {
   return {
     ticker,

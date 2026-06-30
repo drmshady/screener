@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { AsOfBadge } from '@/components/AsOfBadge';
+import { CopyHoldingAdvisorPrompt } from '@/components/CopyHoldingAdvisorPrompt';
 import { ImportTransactions } from '@/components/ImportTransactions';
 import { PortfolioAllocationChart } from '@/components/ChartPanels';
 import { ShariahBadge } from '@/components/ShariahBadge';
@@ -579,7 +580,13 @@ export default function PortfolioPage() {
 
       {importedHoldings.length > 0 ? (
         <section aria-label="Imported holdings ledger" className="space-y-3">
-          <h2 className="text-lg font-semibold text-gray-950">Imported Holdings</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-gray-950">Imported Holdings</h2>
+            <CopyHoldingAdvisorPrompt
+              totalCapital={String(portfolio.total_capital || 1)}
+              strategySlug={settings.default_strategy_slug}
+            />
+          </div>
           <p className="text-xs text-gray-500">
             Derived from {storeTransactions.length} imported transaction{storeTransactions.length !== 1 ? 's' : ''}.
             {importedDetailsLoading ? ' Level details are refreshing.' : ' Level details are recomputed from the latest snapshot.'}
@@ -679,14 +686,23 @@ export default function PortfolioPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          className="border border-gray-300 px-3 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
-                          disabled={removingTicker === h.ticker}
-                          onClick={() => handleRemoveImportedHolding(h.ticker)}
-                          type="button"
-                        >
-                          {removingTicker === h.ticker ? 'Removing…' : 'Remove'}
-                        </button>
+                        <div className="flex flex-col items-end gap-2">
+                          {h.status === 'open' && detail?.priceable ? (
+                            <CopyHoldingAdvisorPrompt
+                              totalCapital={String(portfolio.total_capital || 1)}
+                              ticker={h.ticker}
+                              strategySlug={settings.default_strategy_slug}
+                            />
+                          ) : null}
+                          <button
+                            className="border border-gray-300 px-3 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                            disabled={removingTicker === h.ticker}
+                            onClick={() => handleRemoveImportedHolding(h.ticker)}
+                            type="button"
+                          >
+                            {removingTicker === h.ticker ? 'Removing…' : 'Remove'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

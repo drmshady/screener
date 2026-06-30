@@ -311,6 +311,28 @@ class PortfolioHoldingsResponse(BaseModel):
     disclaimer: str = DISCLAIMER_TEXT
 
 
+class HoldingAdvisorPromptResponse(BaseModel):
+    """Response from POST /portfolio/holdings/{ticker}/advisor-prompt."""
+
+    ticker: str
+    strategy: str
+    personal_use_directive: bool
+    prompt: str
+    data_as_of: str = Field(default_factory=utc_now_iso)
+    disclaimer: str = DISCLAIMER_TEXT
+
+
+class PortfolioAdvisorPromptResponse(BaseModel):
+    """Response from POST /portfolio/holdings/advisor-prompt (whole portfolio)."""
+
+    strategy: str
+    holding_count: int
+    personal_use_directive: bool
+    prompt: str
+    data_as_of: str = Field(default_factory=utc_now_iso)
+    disclaimer: str = DISCLAIMER_TEXT
+
+
 class PortfolioQuoteRequestItem(BaseModel):
     ticker: str
     strategy_slug: str = "midterm_52w_high_momentum"

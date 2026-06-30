@@ -847,6 +847,51 @@ export async function fetchHoldings(body: {
   });
 }
 
+// Feature 014: held-position advisor prompts. The backend builder is the single
+// source of truth; these clients only fetch (and the component copies). Both
+// reuse the same {total_capital} body the holdings table already sends.
+export const HoldingAdvisorPromptResponseSchema = z.object({
+  ticker: z.string(),
+  strategy: z.string(),
+  personal_use_directive: z.boolean(),
+  prompt: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export const PortfolioAdvisorPromptResponseSchema = z.object({
+  strategy: z.string(),
+  holding_count: z.number(),
+  personal_use_directive: z.boolean(),
+  prompt: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export type HoldingAdvisorPromptResponse = z.infer<typeof HoldingAdvisorPromptResponseSchema>;
+export type PortfolioAdvisorPromptResponse = z.infer<typeof PortfolioAdvisorPromptResponseSchema>;
+
+export async function fetchPortfolioAdvisorPrompt(body: {
+  total_capital: string;
+  strategy_slug?: string;
+}): Promise<PortfolioAdvisorPromptResponse> {
+  return fetchApi('/portfolio/holdings/advisor-prompt', PortfolioAdvisorPromptResponseSchema, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchHoldingAdvisorPrompt(
+  ticker: string,
+  body: { total_capital: string; strategy_slug?: string },
+): Promise<HoldingAdvisorPromptResponse> {
+  return fetchApi(
+    `/portfolio/holdings/${encodeURIComponent(ticker)}/advisor-prompt`,
+    HoldingAdvisorPromptResponseSchema,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Feature 013 (US4): live entry-timing status for a watchlist ticker
 // ---------------------------------------------------------------------------

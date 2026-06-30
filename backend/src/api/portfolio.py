@@ -6,6 +6,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..agent.advisor_prompt import (
+    build_holding_advisor_prompt,
+    build_portfolio_advisor_prompt,
+    load_survivorship_status,
+)
 from ..data.portfolio_store import (
     load_portfolio_state,
     load_transactions,
@@ -13,9 +18,12 @@ from ..data.portfolio_store import (
     save_transactions,
 )
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
+from ..lib.flags import personal_use_directive
 from ..models.portfolio import (
+    HoldingAdvisorPromptResponse,
     ImportRequest,
     ImportResult,
+    PortfolioAdvisorPromptResponse,
     PortfolioHolding,
     PortfolioHoldingsRequest,
     PortfolioHoldingsResponse,
@@ -29,9 +37,12 @@ from ..portfolio.aggregation import aggregate
 from ..portfolio.holding_levels import compute_holding_levels
 from ..portfolio.holding_risk import compute_holding_risk
 from ..portfolio.transactions import parse_rows
+from ..regime.calculator import current_regime_response
 from ..screening.engine import build_single_ticker_snapshot
 from ..strategies import midterm_52w_high_momentum as midterm
 from ..strategies._registry import registry
+
+_SUPPORTED_HOLDINGS_STRATEGY = "midterm_52w_high_momentum"
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -169,14 +180,22 @@ def portfolio_import(body: ImportRequest) -> ImportResult:
     )
 
 
-@router.post("/holdings", response_model=PortfolioHoldingsResponse)
-def portfolio_holdings(body: PortfolioHoldingsRequest) -> PortfolioHoldingsResponse:
-    if body.strategy_slug != "midterm_52w_high_momentum":
+def _require_supported_strategy(slug: str) -> None:
+    if slug != _SUPPORTED_HOLDINGS_STRATEGY:
         raise HTTPException(
             status_code=400,
             detail="Portfolio holding levels are currently available for the midterm 52-week-high strategy",
         )
 
+
+def _assemble_holdings(
+    body: PortfolioHoldingsRequest,
+) -> tuple[list[PortfolioHolding], PortfolioTotals, str | None]:
+    """Aggregate transactions into priced holdings + portfolio totals.
+
+    Single source of truth shared by /holdings and the held-position advisor
+    prompt routes, so the prompt's numbers are byte-identical to the table's.
+    """
     transactions, _sheet_id, _sheet_range = load_transactions()
     base_holdings = aggregate(transactions)
     holdings: list[PortfolioHolding] = []
@@ -218,17 +237,97 @@ def portfolio_holdings(body: PortfolioHoldingsRequest) -> PortfolioHoldingsRespo
         if risk is not None:
             total_capital_at_risk += risk.actual_capital_at_risk
 
+    totals = PortfolioTotals(
+        total_invested=money(total_invested),
+        total_capital_at_risk=money(total_capital_at_risk),
+        total_capital_at_risk_pct=(
+            float(total_capital_at_risk / body.total_capital)
+            if body.total_capital > 0
+            else 0.0
+        ),
+    )
+    return holdings, totals, newest_as_of
+
+
+def _best_effort_regime() -> str | None:
+    """Current regime name for the prompt; None if unavailable (never fatal)."""
+    try:
+        return str(current_regime_response().regime)
+    except Exception:
+        return None
+
+
+@router.post("/holdings", response_model=PortfolioHoldingsResponse)
+def portfolio_holdings(body: PortfolioHoldingsRequest) -> PortfolioHoldingsResponse:
+    _require_supported_strategy(body.strategy_slug)
+    holdings, totals, newest_as_of = _assemble_holdings(body)
     return PortfolioHoldingsResponse(
         holdings=holdings,
-        totals=PortfolioTotals(
-            total_invested=money(total_invested),
-            total_capital_at_risk=money(total_capital_at_risk),
-            total_capital_at_risk_pct=(
-                float(total_capital_at_risk / body.total_capital)
-                if body.total_capital > 0
-                else 0.0
-            ),
-        ),
+        totals=totals,
         data_as_of=newest_as_of or utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.post("/holdings/advisor-prompt", response_model=PortfolioAdvisorPromptResponse)
+def portfolio_holdings_advisor_prompt(
+    body: PortfolioHoldingsRequest,
+) -> PortfolioAdvisorPromptResponse:
+    """One copy-ready hold/trim/exit review prompt covering every open holding."""
+    _require_supported_strategy(body.strategy_slug)
+    holdings, totals, newest_as_of = _assemble_holdings(body)
+    open_holdings = [h for h in holdings if h.status == "open"]
+    strategy = registry.get(body.strategy_slug)
+    directive = personal_use_directive()
+    prompt = build_portfolio_advisor_prompt(
+        open_holdings,
+        totals,
+        strategy,
+        survivorship=load_survivorship_status(slug=body.strategy_slug),
+        regime=_best_effort_regime(),
+        directive=directive,
+    )
+    return PortfolioAdvisorPromptResponse(
+        strategy=body.strategy_slug,
+        holding_count=len(open_holdings),
+        personal_use_directive=directive,
+        prompt=prompt,
+        data_as_of=newest_as_of or utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.post(
+    "/holdings/{ticker}/advisor-prompt", response_model=HoldingAdvisorPromptResponse
+)
+def holding_advisor_prompt(
+    ticker: str, body: PortfolioHoldingsRequest
+) -> HoldingAdvisorPromptResponse:
+    """One copy-ready hold/trim/exit review prompt for a single held position."""
+    _require_supported_strategy(body.strategy_slug)
+    holdings, _totals, _newest = _assemble_holdings(body)
+    symbol = ticker.strip().upper()
+    match = next(
+        (h for h in holdings if h.ticker == symbol and h.status == "open"), None
+    )
+    if match is None:
+        raise HTTPException(
+            status_code=404, detail=f"No open holding for ticker: {symbol}"
+        )
+    strategy = registry.get(body.strategy_slug)
+    directive = personal_use_directive()
+    prompt = build_holding_advisor_prompt(
+        match,
+        strategy,
+        survivorship=load_survivorship_status(slug=body.strategy_slug),
+        regime=_best_effort_regime(),
+        directive=directive,
+    )
+    return HoldingAdvisorPromptResponse(
+        ticker=symbol,
+        strategy=body.strategy_slug,
+        personal_use_directive=directive,
+        prompt=prompt,
+        data_as_of=match.data_as_of or utc_now_iso(),
         disclaimer=DISCLAIMER_TEXT,
     )

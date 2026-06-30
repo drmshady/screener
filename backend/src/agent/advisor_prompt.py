@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
+from ..lib.disclaimer import DISCLAIMER_TEXT
 from ..models.strategy import AnalyzeResponse, Strategy
 
 # ---------------------------------------------------------------------------
@@ -966,4 +968,298 @@ def build_midterm_matrix_advisor_prompt(
             )
         )
     sections.append(_matrix_honesty_block(variants, directive))
+    return "\n\n".join(sections) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Held-position prompt (feature 014) — a hold/trim/exit review of a position the
+# owner ALREADY OWNS, built from the feature-013 holdings data (cost basis, both
+# purchase-anchored level bases, and the risk-aware sizing view). Reuses the
+# strategy-context, regime, and reward:risk helpers so the declaration + honesty
+# framing stay the single source of truth. Pure (no wall-clock in the body).
+# ---------------------------------------------------------------------------
+
+
+def _fmt_money(value) -> str | None:
+    if value is None:
+        return None
+    return f"{Decimal(str(value)):.2f}"
+
+
+def _fmt_signed_pct(value) -> str | None:
+    if value is None:
+        return None
+    return f"{value * 100:+.1f}%"
+
+
+def _holding_task_instruction(directive: bool, *, multi: bool) -> str:
+    scope = "these positions" if multi else "this position"
+    if directive:
+        base = (
+            "TASK (personal-use, single-user — directive guidance permitted): You are an "
+            f"expert advisor reviewing {scope} the user ALREADY HOLDS. For each holding, walk "
+            "its purchase-anchored stop/target (both the original-plan and current-condition "
+            "bases) and its capital-at-risk, judge whether the original strategy thesis still "
+            "holds, and give a concrete directive call — HOLD, TRIM, or EXIT — with your "
+            "confidence and the single biggest risk that would change it. Use only the numbers "
+            "provided here — do not compute or invent figures. End with the honesty caveats. "
+            "This guidance is for the single owner of this tool only and must not be redistributed."
+        )
+    else:
+        base = (
+            "TASK: You are an expert analyst reviewing "
+            f"{scope} the user ALREADY HOLDS. For each holding, explain neutrally how it now "
+            "scores against the strategy's rules and where it sits relative to its "
+            "purchase-anchored stop/target (both the original-plan and current-condition bases) "
+            "and its capital-at-risk. Discuss whether the original thesis still holds and lay out "
+            "hold / trim / exit considerations as research for the user's own decision, not a "
+            "recommendation. Use only the numbers provided here — do not compute or invent "
+            "figures. End with the honesty caveats."
+        )
+    return base + "\n\n" + _research_and_summary_instruction(directive, multi=multi)
+
+
+def _level_base_lines(label: str, block, note: str) -> list[str]:
+    lines = [f"### {label} levels ({note})"]
+    if block is None or block.levels_state != "ok":
+        lines.append(
+            "- Insufficient data to derive bounded levels for this base"
+            + (f": {block.rationale}" if block is not None and block.rationale else ".")
+        )
+        return lines
+    levels = (
+        f"- Entry (avg cost): {_fmt_money(block.entry)} | Stop: {_fmt_money(block.stop_loss)}"
+        + (
+            f" (tighter {_fmt_money(block.tighter_stop_loss)})"
+            if block.tighter_stop_loss is not None
+            else ""
+        )
+        + f" | Target: {_fmt_money(block.take_profit)}"
+    )
+    lines.append(levels)
+    rr = _reward_risk(
+        str(block.entry) if block.entry is not None else "",
+        str(block.stop_loss) if block.stop_loss is not None else "",
+        str(block.take_profit) if block.take_profit is not None else "",
+    )
+    if rr is not None:
+        lines.append(f"- Reward:risk = {rr}")
+    dist_stop = _fmt_signed_pct(block.distance_to_stop_pct)
+    dist_target = _fmt_signed_pct(block.distance_to_target_pct)
+    if dist_stop is not None or dist_target is not None:
+        lines.append(
+            "- Distance to stop: "
+            + (dist_stop or "n/a")
+            + " | Distance to target: "
+            + (dist_target or "n/a")
+        )
+    lines.append(f"- Status: {block.status.replace('_', ' ').upper()}")
+    if block.rationale:
+        lines.append(f"- Rationale: {block.rationale}")
+    return lines
+
+
+def _risk_view_lines(risk) -> list[str]:
+    if risk is None:
+        return [
+            "### Risk view",
+            "- Unavailable for this holding (no current-condition stop on this snapshot).",
+        ]
+    lines = [
+        "### Risk view",
+        f"- Suggested size: {risk.recommended_shares} shares "
+        f"({_fmt_money(risk.recommended_value)}) vs actual {risk.actual_shares} shares "
+        f"({_fmt_money(risk.actual_value)})",
+        f"- Capital at risk (to current-condition stop): {_fmt_money(risk.actual_capital_at_risk)} "
+        f"({risk.actual_capital_at_risk_pct * 100:.1f}% of capital)",
+        f"- Per-trade risk budget: {_fmt_money(risk.per_trade_risk_budget)}",
+    ]
+    if risk.over_risk:
+        lines.append(
+            "- Over budget: yes — binding constraint: "
+            f"{risk.binding_constraint or 'unspecified'}"
+        )
+    else:
+        lines.append("- Over budget: no")
+    if risk.fail_open:
+        lines.append(
+            "- Note: a conviction modulator input was missing, so sizing fell back to the "
+            "bounded risk-per-trade baseline (fail-open)."
+        )
+    if risk.sizing_reasoning:
+        lines.append(f"- Sizing basis: {risk.sizing_reasoning}")
+    return lines
+
+
+def _holding_block(holding) -> str:
+    lines = [
+        f"## Held position — {holding.ticker} ({holding.sector})",
+        f"- Net quantity: {holding.net_quantity}",
+        f"- Average cost: {_fmt_money(holding.avg_cost)}",
+        f"- Cost basis: {_fmt_money(holding.cost_basis)}",
+        f"- First purchase: {holding.earliest_buy_date} | Latest purchase: {holding.most_recent_buy_date}",
+        f"- Realized P/L: {_fmt_money(holding.realized_pl)}",
+    ]
+    if not getattr(holding, "priceable", False) or holding.current_price is None:
+        lines.append(
+            "- Current price: not priceable on the current snapshot — this ticker is outside "
+            "the screener's coverage universe, so levels and risk cannot be derived. The "
+            "cost-basis facts above are the owner's own records."
+        )
+        if getattr(holding, "data_notes", None):
+            lines.append("- Data notes: " + " ".join(holding.data_notes))
+        return "\n".join(lines)
+
+    price_line = f"- Current price: {_fmt_money(holding.current_price)}"
+    if holding.data_as_of:
+        price_line += f" (as of {_date_part(holding.data_as_of)})"
+    lines.append(price_line)
+    if holding.unrealized_pl is not None:
+        upl = f"- Unrealized P/L: {_fmt_money(holding.unrealized_pl)}"
+        if holding.unrealized_pl_pct is not None:
+            upl += f" ({_fmt_signed_pct(holding.unrealized_pl_pct)})"
+        lines.append(upl)
+
+    levels = holding.levels
+    lines.extend(
+        _level_base_lines(
+            "Original-plan",
+            levels.original_plan if levels else None,
+            "anchored to average cost, volatility as of the earliest purchase date",
+        )
+    )
+    lines.extend(
+        _level_base_lines(
+            "Current-condition",
+            levels.current_condition if levels else None,
+            "anchored to average cost, latest-snapshot volatility",
+        )
+    )
+    lines.extend(_risk_view_lines(holding.risk))
+    if getattr(holding, "data_notes", None):
+        lines.append("- Data notes: " + " ".join(holding.data_notes))
+    return "\n".join(lines)
+
+
+def _holding_honesty_block(
+    survivorship: dict,
+    directive: bool,
+    *,
+    data_as_of: str | None,
+    disclaimer: str,
+    data_notes: list[str] | None = None,
+) -> str:
+    lines = ["## Honesty & limitations (read before any performance judgment)"]
+    if not survivorship.get("confirmed"):
+        lines.append(
+            "- Survivorship status: UNCONFIRMED — the backtest artifact was unavailable, "
+            "so historical performance cannot be vouched for. Do not assume it is clean."
+        )
+    elif survivorship.get("passed") is False:
+        note = survivorship.get("note") or ""
+        lines.append(
+            "- Survivorship bias: the backtest FAILS its survivorship check, so historical "
+            "performance (hit-rate, returns) is OPTIMISTIC — delisted/failed companies are "
+            "absent from the data." + (f" Detail: {note}" if note else "")
+        )
+    else:
+        lines.append(
+            "- Survivorship bias: the backtest passes its survivorship check on this snapshot."
+        )
+    lines.append(
+        "- Levels are anchored to the owner's average cost (a real fill), not a fresh entry; "
+        "the current-condition base re-derives volatility on the latest snapshot. Sizing is the "
+        "risk-per-trade backbone, hard-bounded by the position/sector caps."
+    )
+    if data_notes:
+        lines.append("- Data notes: " + " ".join(data_notes))
+    lines.append(f"- Data freshness: end-of-day, as of {_date_part(data_as_of) or 'unavailable'}.")
+    lines.append(f"- {disclaimer}")
+    if directive:
+        lines.append(
+            "- Scope: directive guidance here is for the single owner of this personal-use "
+            "tool only; it is not advice for anyone else and must not be redistributed."
+        )
+    return "\n".join(lines)
+
+
+def build_holding_advisor_prompt(
+    holding,
+    strategy: Strategy,
+    *,
+    survivorship: dict,
+    regime: str | None = None,
+    directive: bool = False,
+) -> str:
+    """Assemble the copy-ready hold/trim/exit review prompt for one held position.
+
+    Pure function of its inputs (no wall-clock in the body), so it is byte-identical
+    on re-run for a fixed snapshot + portfolio. The honesty block is always last.
+    """
+    sections = [
+        _holding_task_instruction(directive, multi=False),
+        _strategy_context(strategy, []),
+        _regime_block(strategy, regime),
+        _holding_block(holding),
+        _holding_honesty_block(
+            survivorship,
+            directive,
+            data_as_of=getattr(holding, "data_as_of", None),
+            disclaimer=holding.disclaimer if hasattr(holding, "disclaimer") else DISCLAIMER_TEXT,
+            data_notes=getattr(holding, "data_notes", None),
+        ),
+    ]
+    return "\n\n".join(sections) + "\n"
+
+
+def build_portfolio_advisor_prompt(
+    holdings,
+    totals,
+    strategy: Strategy,
+    *,
+    survivorship: dict,
+    regime: str | None = None,
+    directive: bool = False,
+) -> str:
+    """Assemble ONE hold/trim/exit review prompt covering every held position.
+
+    Strategy context, regime, totals, and the honesty block appear once; each
+    holding gets its own block. Pure function of its inputs (no wall-clock) →
+    byte-identical re-export for a fixed snapshot + portfolio.
+    """
+    holdings = list(holdings)
+    body = (
+        "\n\n".join(_holding_block(h) for h in holdings)
+        if holdings
+        else "_No open holdings._"
+    )
+    totals_line = (
+        "## Portfolio totals\n"
+        f"- Total invested: {_fmt_money(totals.total_invested)}\n"
+        f"- Total capital at risk: {_fmt_money(totals.total_capital_at_risk)} "
+        f"({totals.total_capital_at_risk_pct * 100:.1f}% of capital)"
+    )
+    newest_as_of = max(
+        (h.data_as_of for h in holdings if getattr(h, "data_as_of", None)),
+        default=None,
+    )
+    all_notes: list[str] = []
+    for h in holdings:
+        for n in getattr(h, "data_notes", None) or []:
+            if n not in all_notes:
+                all_notes.append(n)
+    sections = [
+        _holding_task_instruction(directive, multi=True),
+        _strategy_context(strategy, []),
+        _regime_block(strategy, regime),
+        totals_line,
+        f"## Holdings ({len(holdings)})\n{body}",
+        _holding_honesty_block(
+            survivorship,
+            directive,
+            data_as_of=newest_as_of,
+            disclaimer=DISCLAIMER_TEXT,
+            data_notes=all_notes,
+        ),
+    ]
     return "\n\n".join(sections) + "\n"
