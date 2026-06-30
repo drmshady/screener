@@ -15,6 +15,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import Script from 'next/script';
 import { importTransactions, ImportResult } from '@/lib/api';
 import { googleSheetsAvailable, gisScriptLoaded, readSheetRows } from '@/lib/googleSheets';
 import { useAppStore } from '@/lib/store';
@@ -41,14 +42,16 @@ export function ImportTransactions({ onImported }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
-  const [gisReady, setGisReady] = useState(false);
+  // Lazy initializer (not an effect) handles the "script already loaded" case —
+  // e.g. navigating back to /portfolio — without a synchronous setState in an
+  // effect body. On SSR/first hydration it is false (no window / not yet loaded).
+  const [gisReady, setGisReady] = useState<boolean>(() => gisScriptLoaded());
 
-  // Poll until the GIS script loads (it may arrive after hydration).
+  // Poll until the GIS script loads (it may arrive after hydration). The
+  // <Script onLoad> below also flips this; the poll is the fallback for a
+  // remount where the cached script's onLoad does not refire.
   useEffect(() => {
-    if (gisScriptLoaded()) {
-      setGisReady(true);
-      return;
-    }
+    if (gisReady) return;
     const interval = window.setInterval(() => {
       if (gisScriptLoaded()) {
         setGisReady(true);
@@ -56,8 +59,13 @@ export function ImportTransactions({ onImported }: Props) {
       }
     }, 500);
     return () => clearInterval(interval);
-  }, []);
+  }, [gisReady]);
 
+  // Gate the GIS library load on a configured client id (inlined at build time,
+  // so this is identical server- and client-side — no hydration mismatch). When
+  // the id is absent we render no <Script> and make no Google network call,
+  // preserving the headless/offline graceful-degradation guarantee.
+  const clientConfigured = Boolean(process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim());
   const available = googleSheetsAvailable() && gisReady;
 
   async function handleImport() {
@@ -99,6 +107,13 @@ export function ImportTransactions({ onImported }: Props) {
 
   return (
     <section aria-label="Import transactions from Google Sheet" className="space-y-4 border border-gray-200 p-5">
+      {clientConfigured ? (
+        <Script
+          src="https://accounts.google.com/gsi/client"
+          strategy="afterInteractive"
+          onLoad={() => setGisReady(true)}
+        />
+      ) : null}
       <h2 className="text-lg font-semibold text-gray-950">Import from Google Sheet</h2>
 
       {disabledReason ? (
