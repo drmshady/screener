@@ -57,6 +57,26 @@ export interface WatchlistEntry {
     take_profit: string;
   };
   note?: string;
+  /**
+   * Feature 013 (US4): last observed live entry-timing state + when it was
+   * checked, so a ticker that newly became entry-ready since the owner last
+   * looked can be visually flagged. Informational only.
+   */
+  last_entry_state?: 'entry_ready' | 'not_entry_ready' | 'entry_undetermined';
+  last_checked_at?: string;
+}
+
+/** A transaction row as persisted in the browser store (mirrors the backend Transaction model). */
+export interface Transaction {
+  id: string;
+  ticker: string;
+  action: 'buy' | 'sell';
+  quantity: string;   // Decimal serialised as string
+  price: string;      // Decimal serialised as string
+  trade_date: string; // ISO date string YYYY-MM-DD
+  fees: string | null;
+  note: string | null;
+  source_row: number;
 }
 
 interface ImportResult {
@@ -68,6 +88,10 @@ interface StoredState {
   portfolio: Portfolio;
   watchlist: WatchlistEntry[];
   settings: UserSettings;
+  /** Feature 013: imported transactions (source of truth for holdings). */
+  transactions: Transaction[];
+  sheet_id: string | null;
+  sheet_range: string | null;
 }
 
 interface AppState extends StoredState {
@@ -78,12 +102,20 @@ interface AppState extends StoredState {
   acknowledgeLocalStorageWarning: () => void;
   saveCandidate: (entry: Omit<WatchlistEntry, 'id' | 'saved_at' | 'state'>) => void;
   updateWatchlistState: (id: string, state: WatchlistEntry['state']) => void;
+  setWatchlistEntryStatus: (
+    id: string,
+    entryState: NonNullable<WatchlistEntry['last_entry_state']>,
+    checkedAt: string,
+  ) => void;
   updateSettings: (settings: Partial<UserSettings>) => void;
   addShariahOverride: (direction: ShariahOverride['direction'], ticker: string, note?: string) => void;
   removeShariahOverride: (direction: ShariahOverride['direction'], ticker: string) => void;
   exportData: () => string;
   importData: (payload: string) => ImportResult;
   hydrateStored: (raw: unknown) => void;
+  /** Feature 013: persist imported transactions from POST /portfolio/import. */
+  setTransactions: (transactions: Transaction[], sheetId?: string | null, sheetRange?: string | null) => void;
+  clearTransactions: () => void;
 }
 
 function nowIso() {
@@ -221,6 +253,9 @@ function normalizeStoredState(value: unknown): StoredState {
     portfolio: normalizePortfolio(stateRecord.portfolio),
     watchlist: Array.isArray(stateRecord.watchlist) ? (stateRecord.watchlist as WatchlistEntry[]) : [],
     settings: normalizeSettings(stateRecord.settings),
+    transactions: Array.isArray(stateRecord.transactions) ? (stateRecord.transactions as Transaction[]) : [],
+    sheet_id: typeof stateRecord.sheet_id === 'string' ? stateRecord.sheet_id : null,
+    sheet_range: typeof stateRecord.sheet_range === 'string' ? stateRecord.sheet_range : null,
   };
 }
 
@@ -231,6 +266,9 @@ function exportSnapshot(state: StoredState) {
     portfolio: state.portfolio,
     watchlist: state.watchlist,
     settings: state.settings,
+    transactions: state.transactions,
+    sheet_id: state.sheet_id,
+    sheet_range: state.sheet_range,
   };
 }
 
@@ -240,6 +278,9 @@ export const useAppStore = create<AppState>()(
       portfolio: defaultPortfolio(),
       watchlist: [],
       settings: defaultSettings(),
+      transactions: [],
+      sheet_id: null,
+      sheet_range: null,
       setTotalCapital: (amount) =>
         set((state) => ({
           portfolio: {
@@ -341,6 +382,14 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           watchlist: state.watchlist.map((item) => (item.id === id ? { ...item, state: nextState } : item)),
         })),
+      setWatchlistEntryStatus: (id, entryState, checkedAt) =>
+        set((state) => ({
+          watchlist: state.watchlist.map((item) =>
+            item.id === id
+              ? { ...item, last_entry_state: entryState, last_checked_at: checkedAt }
+              : item,
+          ),
+        })),
       updateSettings: (settings) => set((state) => ({ settings: { ...state.settings, ...settings } })),
       addShariahOverride: (direction, ticker, note) =>
         set((state) => {
@@ -376,6 +425,9 @@ export const useAppStore = create<AppState>()(
             },
           };
         }),
+      setTransactions: (transactions, sheetId = null, sheetRange = null) =>
+        set(() => ({ transactions, sheet_id: sheetId ?? null, sheet_range: sheetRange ?? null })),
+      clearTransactions: () => set(() => ({ transactions: [], sheet_id: null, sheet_range: null })),
       exportData: () => JSON.stringify(exportSnapshot(get()), null, 2),
       importData: (payload) => {
         try {
@@ -394,7 +446,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'screener-storage',
-      version: 4,
+      version: 6,
       migrate: (persisted, version) => {
         const state = normalizeStoredState(persisted) as AppState;
         if (version < 4) {
@@ -406,6 +458,10 @@ export const useAppStore = create<AppState>()(
             shariah_external_sources: [...DEFAULT_SHARIAH_SOURCES],
           };
         }
+        // version < 5 (Phase 013): transactions/sheet fields are already handled
+        // by normalizeStoredState (defaults to [] / null when absent).
+        // version < 6 (Phase 013, US4): watchlist last_entry_state/last_checked_at
+        // are optional and preserved as-is by normalizeStoredState (absent = unset).
         return state;
       },
     },

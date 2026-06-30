@@ -4,6 +4,19 @@ import { useEffect, useRef } from 'react';
 import { getPortfolioState, putPortfolioState } from '@/lib/api';
 import { useAppStore } from '@/lib/store';
 
+type StoreSnapshot = ReturnType<typeof useAppStore.getState>;
+
+export function portfolioSyncPayload(s: StoreSnapshot) {
+  return {
+    portfolio: s.portfolio,
+    watchlist: s.watchlist,
+    settings: s.settings,
+    transactions: s.transactions,
+    sheet_id: s.sheet_id,
+    sheet_range: s.sheet_range,
+  };
+}
+
 /**
  * Two-way sync between the local zustand store (localStorage) and the server-side
  * portfolio blob, so the portfolio/watchlist/settings survive across browsers,
@@ -28,7 +41,7 @@ export function PortfolioSync() {
           useAppStore.getState().hydrateStored(resp.state);
         } else {
           const s = useAppStore.getState();
-          await putPortfolioState({ portfolio: s.portfolio, watchlist: s.watchlist, settings: s.settings });
+          await putPortfolioState(portfolioSyncPayload(s));
         }
       } catch {
         // backend offline — keep using localStorage
@@ -49,14 +62,17 @@ export function PortfolioSync() {
       if (
         state.portfolio === prev.portfolio &&
         state.watchlist === prev.watchlist &&
-        state.settings === prev.settings
+        state.settings === prev.settings &&
+        state.transactions === prev.transactions &&
+        state.sheet_id === prev.sheet_id &&
+        state.sheet_range === prev.sheet_range
       ) {
         return;
       }
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         const s = useAppStore.getState();
-        putPortfolioState({ portfolio: s.portfolio, watchlist: s.watchlist, settings: s.settings }).catch(() => {});
+        putPortfolioState(portfolioSyncPayload(s)).catch(() => {});
       }, 800);
     });
     return () => {

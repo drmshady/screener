@@ -21,5 +21,5 @@ test('US1 mid-term screen renders gates, metrics, candidates, and disclaimer', a
   await expect(rows.first().locator('td').nth(3)).toContainText('$');
   await expect(rows.first().locator('td').nth(4)).toContainText('$');
   await expect(rows.first().locator('td').nth(5)).toContainText('$');
-  await expect(page.getByRole('button', { name: 'Save' }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add to watchlist' }).first()).toBeVisible();
 });

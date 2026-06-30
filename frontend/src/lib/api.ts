@@ -699,6 +699,7 @@ export async function postSizing(request: SizingRequest): Promise<{ status: numb
 }
 
 export type Candidate = z.infer<typeof CandidateSchema>;
+export type EntryTiming = z.infer<typeof EntryTimingSchema>;
 export type Strategy = z.infer<typeof StrategySchema>;
 export type BacktestResponse = z.infer<typeof BacktestResponseSchema>;
 export type EquityCurveResponse = z.infer<typeof EquityCurveResponseSchema>;
@@ -720,3 +721,159 @@ export type AdvisorPromptResponse = z.infer<typeof AdvisorPromptResponseSchema>;
 export type ScreenAdvisorPromptResponse = z.infer<typeof ScreenAdvisorPromptResponseSchema>;
 export type SourceMeta = z.infer<typeof SourceMetaSchema>;
 export type MetaResponse = z.infer<typeof MetaResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Feature 013: Portfolio import (POST /portfolio/import)
+// ---------------------------------------------------------------------------
+
+export const RejectedRowSchema = z.object({
+  source_row: z.number(),
+  raw: z.record(z.string(), z.unknown()),
+  reason: z.string(),
+});
+
+export const ImportResultSchema = z.object({
+  accepted_count: z.number(),
+  duplicate_count: z.number(),
+  rejected: z.array(RejectedRowSchema),
+  transactions_total: z.number(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export type RejectedRow = z.infer<typeof RejectedRowSchema>;
+export type ImportResult = z.infer<typeof ImportResultSchema>;
+
+/**
+ * POST /portfolio/import — validate and idempotently apply transaction rows.
+ *
+ * The browser reads the raw sheet rows via googleSheets.ts and passes them here.
+ * The backend does all normalisation, validation, and deduplication.
+ * Always resolves (partial success = success); throws only on network/5xx.
+ */
+export async function importTransactions(body: {
+  rows: Record<string, unknown>[];
+  sheet_id?: string;
+  sheet_range?: string;
+}): Promise<ImportResult> {
+  return fetchApi('/portfolio/import', ImportResultSchema, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Feature 013: Portfolio holdings with purchase-anchored levels
+// ---------------------------------------------------------------------------
+
+export const LevelBlockSchema = z.object({
+  entry: z.string().nullable().optional(),
+  stop_loss: z.string().nullable().optional(),
+  tighter_stop_loss: z.string().nullable().optional(),
+  take_profit: z.string().nullable().optional(),
+  risk_distance: z.string().nullable().optional(),
+  reward_distance: z.string().nullable().optional(),
+  reward_ceiling_basis: z.string().nullable().optional(),
+  bounds_applied: z.array(z.string()).optional().default([]),
+  levels_state: z.enum(['ok', 'insufficient_data']),
+  rationale: z.string(),
+  distance_to_stop_pct: z.number().nullable().optional(),
+  distance_to_target_pct: z.number().nullable().optional(),
+  status: z.enum(['holding', 'stop_breached', 'target_reached', 'insufficient_data']),
+});
+
+export const HoldingLevelsSchema = z.object({
+  original_plan: LevelBlockSchema,
+  current_condition: LevelBlockSchema,
+});
+
+export const HoldingRiskSchema = z.object({
+  recommended_shares: z.number(),
+  recommended_value: z.string(),
+  actual_shares: z.string(),
+  actual_value: z.string(),
+  actual_capital_at_risk: z.string(),
+  actual_capital_at_risk_pct: z.number(),
+  per_trade_risk_budget: z.string(),
+  over_risk: z.boolean(),
+  binding_constraint: z.enum(['per_trade_budget', 'position_cap', 'sector_cap']).nullable().optional(),
+  sizing_reasoning: z.string(),
+  fail_open: z.boolean(),
+});
+
+export const PortfolioHoldingSchema = z.object({
+  ticker: z.string(),
+  net_quantity: z.string(),
+  avg_cost: z.string(),
+  cost_basis: z.string(),
+  earliest_buy_date: z.string(),
+  most_recent_buy_date: z.string(),
+  realized_pl: z.string(),
+  status: z.enum(['open', 'closed', 'anomalous']),
+  priceable: z.boolean(),
+  sector: z.string(),
+  current_price: z.string().nullable().optional(),
+  unrealized_pl: z.string().nullable().optional(),
+  unrealized_pl_pct: z.number().nullable().optional(),
+  data_notes: z.array(z.string()).optional().default([]),
+  data_as_of: z.string().nullable().optional(),
+  levels: HoldingLevelsSchema.nullable().optional(),
+  risk: HoldingRiskSchema.nullable().optional(),
+});
+
+export const PortfolioHoldingsResponseSchema = z.object({
+  holdings: z.array(PortfolioHoldingSchema),
+  totals: z.object({
+    total_invested: z.string(),
+    total_capital_at_risk: z.string(),
+    total_capital_at_risk_pct: z.number(),
+  }),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export type LevelBlock = z.infer<typeof LevelBlockSchema>;
+export type HoldingRisk = z.infer<typeof HoldingRiskSchema>;
+export type PortfolioHoldingWithLevels = z.infer<typeof PortfolioHoldingSchema>;
+export type PortfolioHoldingsResponse = z.infer<typeof PortfolioHoldingsResponseSchema>;
+
+export async function fetchHoldings(body: {
+  total_capital: string;
+  strategy_slug?: string;
+}): Promise<PortfolioHoldingsResponse> {
+  return fetchApi('/portfolio/holdings', PortfolioHoldingsResponseSchema, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Feature 013 (US4): live entry-timing status for a watchlist ticker
+// ---------------------------------------------------------------------------
+
+/**
+ * Thin live entry-timing read-out for the "watch until entry-ready" view.
+ * Reuses feature-012's `GET /analyze/{ticker}` (which already returns
+ * `entry_timing`) and exposes only the timing block plus freshness/disclaimer.
+ * No new backend logic (FR-021).
+ */
+export interface EntryStatus {
+  ticker: string;
+  entry_timing: EntryTiming | null;
+  data_as_of: string;
+  disclaimer: string;
+}
+
+export async function fetchEntryStatus(ticker: string, strategySlug: string): Promise<EntryStatus> {
+  const query = new URLSearchParams({ strategy: strategySlug });
+  const response = await fetchApi(
+    `/analyze/${encodeURIComponent(ticker)}?${query.toString()}`,
+    AnalyzeResponseSchema,
+  );
+  return {
+    ticker: response.ticker,
+    entry_timing: response.entry_timing ?? null,
+    data_as_of: response.data_as_of,
+    disclaimer: response.disclaimer,
+  };
+}

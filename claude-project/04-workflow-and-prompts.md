@@ -177,16 +177,48 @@ cite the source behind each gate, and tell me which "passes" are real vs
 passed-through on missing data.
 ```
 
-## Template C — "Should I trim / exit a position I hold?"
+## Template C — "Should I trim / exit a position I hold?" (feature 013 portfolio)
+
+> **Feature 013:** the **Portfolio** page now imports your real buy/sell transactions
+> (from a Google Sheet) into one **average-cost holding per ticker**, and for each holding
+> shows **two purchase-anchored level bases** plus a **risk view** — paste them straight in:
+>
+> - **Original-plan** stop/target — frozen from your **average cost** and the volatility **as
+>   of your earliest buy date**. This is the plan you entered with; it shows how it has aged.
+> - **Current-condition** stop/target — same average-cost anchor, but stop/target **recomputed
+>   on the latest snapshot**. This is the live plan.
+> - **Risk view** — **recommended** size (risk-per-trade `(risk% × capital)/(entry − stop)`
+>   sized to the *current-condition* stop, capped 10%/25%) **vs your actual** shares, your
+>   **capital-at-risk** ($ and % to the current stop), an **over-risk** flag with its binding
+>   constraint, and the portfolio totals (invested, total capital-at-risk).
+>
+> Both bases reuse the same bounded math the advisor already knows (risk clamped 1–4×ATR,
+> R-target capped at a volatility ceiling) — so **explain** the app's numbers, don't recompute
+> them. If a base reads `levels_state = insufficient_data` or the holding is **out of
+> coverage / not priceable**, say the levels can't be derived rather than inventing one.
 
 ```
-I'm holding <TKR> from <entry date> at avg cost <x>. Current close <x>,
-ATR <x>, SMA200 <x>, original stop <x>, target <x>. Days held: <n>.
-Regime now: <regime>.
+Strategy: <midterm_52w_high_momentum | midterm_value_composite>. As-of: <date>. Regime: <regime>.
 
-Per this strategy's exit logic (trend/structure stop, 3R target, 60–180 day
-horizon), what's the disciplined action? Give me the call and the level that
-would change it.
+I'm holding <TKR> (<sector>). Imported avg cost <x> over <n> buys.
+Earliest buy <date> (anchors the original plan); most recent buy <date>. Days held: <n>.
+Net shares: <x>. Current price <x>. Unrealized P/L: <x> (<x>%).
+
+Original-plan levels:    stop <x>  target <x>  levels_state <ok/insufficient_data>
+Current-condition levels: stop <x>  target <x>  levels_state <ok/insufficient_data>
+ATR <x>  SMA200 <x>  20d_low <x>   (if you have the raw inputs)
+
+Risk view: recommended_shares <x> vs actual_shares <x>;
+capital_at_risk <x> (<x>% of capital); per_trade_budget <x>;
+over_risk <true/false>; binding_constraint <per_trade_budget/position_cap/sector_cap/none>.
+
+Compare the two bases: how has the plan aged (is the current-condition stop tighter/looser
+than the original, and has price breached either)? Per this strategy's exit logic
+(trend/structure stop, 3R momentum / 4R value target capped at the vol ceiling, 60–180 day
+horizon), what's the disciplined action — hold / trim / exit — and the single level that
+would change it? If I'm flagged over-risk, say by how much and which constraint binds, and
+what trim brings me back inside the per-trade budget. Treat fair value as context only.
+End with the survivorship caveat and a one-line "this is your decision".
 ```
 
 ## Template D — Teaching / understanding

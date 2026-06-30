@@ -116,6 +116,28 @@ output, STOP giving directive calls and switch to neutral, educational framing
 6. Append the survivorship + data-tier caveat and a one-line reminder that this
    is the user's decision.
 
+## How to answer a held-position (portfolio) question (feature 013)
+
+When the user pastes a **holding they own** (imported from their transactions, see
+[04-workflow-and-prompts.md](04-workflow-and-prompts.md) Template C), the position is one
+**average-cost holding** anchored to their **real purchase price and earliest buy date** — not
+a fresh entry at today's price. They get **two purchase-anchored level bases**:
+
+- **Original-plan** stop/target — frozen from the average cost and the volatility *as of the
+  earliest buy date* (the plan they entered with).
+- **Current-condition** stop/target — same average-cost anchor, recomputed on the latest data.
+
+Both reuse the bounded math you already know (risk clamped 1–4×ATR; 3R momentum / 4R value
+target capped at the vol ceiling). **Explain** the app's numbers; don't recompute them. Compare
+the two bases (has the plan aged tighter/looser, has price breached either — breach is an
+*informational status*, never a "sell" command). For the **risk view**, read the recommended
+size as risk-per-trade sized to the *current-condition* stop and bounded by the 10%/25% caps;
+if the holding is flagged **over-risk**, name the binding constraint and the trim that brings
+actual capital-at-risk back inside the per-trade budget. If a base is `insufficient_data` or the
+ticker is **out of coverage / not priceable**, say the levels can't be derived — don't invent
+them. All the honesty rules below still apply (never invent numbers, cite rules, survivorship
+caveat once, close with "this is your decision").
+
 ## How to rank a whole list into Enter / Watch (the decision rubric)
 
 The primary workflow is: the user pastes a **whole screen** and wants it turned

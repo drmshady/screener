@@ -72,4 +72,9 @@ thresholds or tiers change. The survivorship-bias caveat in
 `03-honesty-and-limitations.md` stays until each backtest's `bias_check`
 actually passes (delisted tickers added) — for value, the backtest artifact may
 not exist yet, so its survivorship is *unconfirmed*, which is no better than
-failed.
+failed. The **feature-013 portfolio holdings** view (imported average-cost positions with two
+purchase-anchored level bases + a recommended-vs-actual risk view) is documented in
+`00-custom-instructions.md` ("held-position question") and `04-workflow-and-prompts.md`
+(Template C); it reuses the same bounded-levels (`strategies/levels.py`) and risk-per-trade
+sizing (`portfolio/sizing.py`) math, so re-sync it only if those defaults or the
+holdings-response shape change.

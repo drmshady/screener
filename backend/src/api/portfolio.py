@@ -6,14 +6,29 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..data.portfolio_store import load_portfolio_state, save_portfolio_state
+from ..data.portfolio_store import (
+    load_portfolio_state,
+    load_transactions,
+    save_portfolio_state,
+    save_transactions,
+)
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..models.portfolio import (
+    ImportRequest,
+    ImportResult,
+    PortfolioHolding,
+    PortfolioHoldingsRequest,
+    PortfolioHoldingsResponse,
+    PortfolioTotals,
     PortfolioQuote,
     PortfolioQuotesRequest,
     PortfolioQuotesResponse,
     money,
 )
+from ..portfolio.aggregation import aggregate
+from ..portfolio.holding_levels import compute_holding_levels
+from ..portfolio.holding_risk import compute_holding_risk
+from ..portfolio.transactions import parse_rows
 from ..screening.engine import build_single_ticker_snapshot
 from ..strategies import midterm_52w_high_momentum as midterm
 from ..strategies._registry import registry
@@ -113,6 +128,107 @@ def portfolio_quotes(request: PortfolioQuotesRequest) -> PortfolioQuotesResponse
 
     return PortfolioQuotesResponse(
         quotes=quotes,
+        data_as_of=newest_as_of or utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.post("/import", response_model=ImportResult)
+def portfolio_import(body: ImportRequest) -> ImportResult:
+    """Validate and idempotently apply transaction rows from the owner's Google Sheet.
+
+    The browser reads the sheet via a short-lived GIS token and POSTs the raw rows
+    here; the server normalises, validates, deduplicates, and persists.
+
+    Always returns 200 — partial success (some rows rejected) is still success.
+    422 only when the request body itself is malformed.
+    """
+    # Parse and validate the incoming rows
+    accepted_new, rejected = parse_rows(list(body.rows))
+
+    # Load existing persisted transactions (empty list if none yet)
+    persisted, existing_sheet_id, existing_sheet_range = load_transactions()
+    existing_ids: set[str] = {t.id for t in persisted}
+
+    # Idempotent merge: skip ids already present
+    net_new = [t for t in accepted_new if t.id not in existing_ids]
+    duplicate_count = len(accepted_new) - len(net_new)
+
+    merged = persisted + net_new
+    sheet_id = body.sheet_id or existing_sheet_id
+    sheet_range = body.sheet_range or existing_sheet_range
+    save_transactions(merged, sheet_id, sheet_range)
+
+    return ImportResult(
+        accepted_count=len(net_new),
+        duplicate_count=duplicate_count,
+        rejected=rejected,
+        transactions_total=len(merged),
+        data_as_of=utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.post("/holdings", response_model=PortfolioHoldingsResponse)
+def portfolio_holdings(body: PortfolioHoldingsRequest) -> PortfolioHoldingsResponse:
+    if body.strategy_slug != "midterm_52w_high_momentum":
+        raise HTTPException(
+            status_code=400,
+            detail="Portfolio holding levels are currently available for the midterm 52-week-high strategy",
+        )
+
+    transactions, _sheet_id, _sheet_range = load_transactions()
+    base_holdings = aggregate(transactions)
+    holdings: list[PortfolioHolding] = []
+    newest_as_of: str | None = None
+
+    for holding in base_holdings:
+        if holding.status != "open":
+            holdings.append(PortfolioHolding(**holding.model_dump()))
+            continue
+        enriched = compute_holding_levels(holding)
+        if enriched.data_as_of:
+            newest_as_of = max(newest_as_of or enriched.data_as_of, enriched.data_as_of)
+        holdings.append(enriched)
+
+    total_invested = Decimal("0")
+    sector_values: dict[str, Decimal] = {}
+    for holding in holdings:
+        if holding.status != "open":
+            continue
+        basis_price = holding.current_price or holding.avg_cost
+        value = basis_price * holding.net_quantity
+        total_invested += value
+        sector_values[holding.sector] = sector_values.get(holding.sector, Decimal("0")) + value
+
+    total_capital_at_risk = Decimal("0")
+    for holding in holdings:
+        if holding.status != "open":
+            continue
+        risk = compute_holding_risk(
+            holding,
+            levels=holding.levels,
+            current_price=holding.current_price,
+            sector=holding.sector,
+            total_capital=body.total_capital,
+            caps=body.caps,
+            sector_value=sector_values.get(holding.sector, Decimal("0")),
+        )
+        holding.risk = risk
+        if risk is not None:
+            total_capital_at_risk += risk.actual_capital_at_risk
+
+    return PortfolioHoldingsResponse(
+        holdings=holdings,
+        totals=PortfolioTotals(
+            total_invested=money(total_invested),
+            total_capital_at_risk=money(total_capital_at_risk),
+            total_capital_at_risk_pct=(
+                float(total_capital_at_risk / body.total_capital)
+                if body.total_capital > 0
+                else 0.0
+            ),
+        ),
         data_as_of=newest_as_of or utc_now_iso(),
         disclaimer=DISCLAIMER_TEXT,
     )

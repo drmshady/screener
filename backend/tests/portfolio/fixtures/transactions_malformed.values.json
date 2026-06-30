@@ -1,0 +1,16 @@
+{
+  "_doc": "Malformed-row fixture (same descriptive-header sheet shape as transactions_sheet.values.json). EVERY data row here must be REJECTED with a row reference + reason and NEVER silently dropped (FR-003, SC-002). Covers the validation-failure cases enumerated in T005: missing price, unparseable date, non-positive quantity, plus action-not-buy/sell and a placeholder-dash price. The header row is valid.",
+  "sheet_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ABCDEF",
+  "sheet_range": "Transactions!A1:F",
+  "range": "Transactions!A1:F50",
+  "majorDimension": "ROWS",
+  "values": [
+    ["Date", "Type", "Stock", "Transacted Units", "Transacted Price (per unit)", "Fees"],
+    ["2/9/2025", "Buy", "nvda", "10", "", "$0.00"],
+    ["not-a-date", "Buy", "aapl", "5", "$190.00", "$0.00"],
+    ["5/9/2025", "Buy", "tsla", "0", "$250.00", "$0.00"],
+    ["6/9/2025", "Sell", "tsla", "-2", "$250.00", "$0.00"],
+    ["7/9/2025", "Buy", "meta", "3", "—", "$0.00"],
+    ["8/9/2025", "Transfer", "googl", "2", "$140.00", "$0.00"]
+  ]
+}

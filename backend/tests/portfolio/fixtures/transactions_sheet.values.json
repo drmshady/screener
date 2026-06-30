@@ -1,0 +1,19 @@
+{
+  "_doc": "Faithful capture of the owner's REAL Google Sheet, in the Google Sheets REST v4 values shape (majorDimension=ROWS, first row is the header). The browser googleSheets.ts reader returns exactly this; the pure backend parser (portfolio/transactions.py) maps the descriptive headers to canonical fields, strips $/comma money, parses day-first slash + month-name dates, and lower/upper-cases as needed. Shared by the US1/US2/US3 unit + contract tests. Computed columns (Total Value / Current Price / Market Value) are spreadsheet formulas that MUST be ignored.",
+  "sheet_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ABCDEF",
+  "sheet_range": "Transactions!A1:I",
+  "range": "Transactions!A1:I50",
+  "majorDimension": "ROWS",
+  "values": [
+    ["Date", "Type", "Stock", "Transacted Units", "Transacted Price (per unit)", "Fees", "Total Value", "Current Price", "Market Value"],
+    ["28/7/2025", "Buy", "spus", "10", "$30.50", "$0.00", "$305.00", "$31.10", "$311.00"],
+    ["15/8/2025", "Buy", "msft", "5", "$400.00", "$1.00", "$2,001.00", "$415.20", "$2,076.00"],
+    ["9-Oct-2025", "Buy", "msft", "5", "$415.20", "$1.00", "$2,077.00", "$415.20", "$2,076.00"],
+    ["20/9/2025", "Buy", "amzn", "8", "$1,025.32", "$2.50", "$8,205.06", "$1,100.00", "$8,800.00"],
+    ["5/10/2025", "Sell", "amzn", "3", "$1,100.00", "$2.50", "$3,297.50", "$1,100.00", "$3,300.00"],
+    ["1/9/2025", "Div", "msft", "0", "$0.75", "$0.00", "$0.00", "", ""],
+    ["12/6/2025", "Buy", "slv", "20", "$27.10", "$0.00", "$542.00", "$28.00", "$560.00"],
+    ["3/10/2025", "Buy", "ibit", "15", "$42.00", "$0.00", "$630.00", "$44.50", "$667.50"],
+    ["9-Oct-2025", "Buy", "gld", "4", "$245.00", "$0.00", "$980.00", "$250.00", "$1,000.00"]
+  ]
+}

@@ -238,8 +238,9 @@ export function CandidateRow({
               },
             })
           }
+          title="Watch this candidate until it becomes entry-ready"
         >
-          Save
+          Add to watchlist
         </button>
         <button
           type="button"

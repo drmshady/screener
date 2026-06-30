@@ -1,19 +1,75 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { AsOfBadge } from '@/components/AsOfBadge';
+import { ImportTransactions } from '@/components/ImportTransactions';
 import { PortfolioAllocationChart } from '@/components/ChartPanels';
 import { ShariahBadge } from '@/components/ShariahBadge';
 import {
+  ImportResult,
+  LevelBlock,
   PortfolioQuote,
+  PortfolioHoldingWithLevels,
   PortfolioQuotesResponseSchema,
   ShariahStatus,
   ShariahStatusSchema,
   fetchApi,
+  fetchHoldings,
+  getPortfolioState,
 } from '@/lib/api';
 import { COPY } from '@/lib/copy';
 import { formatMoney } from '@/lib/format';
-import { Holding, useAppStore } from '@/lib/store';
+import { Holding, Transaction, useAppStore } from '@/lib/store';
+
+/** Per-ticker summary derived from imported transactions (frontend MVP aggregation). */
+interface ImportedHolding {
+  ticker: string;
+  net_quantity: number;
+  avg_cost: number;
+  earliest_buy_date: string;
+  most_recent_buy_date: string;
+  status: 'open' | 'closed' | 'anomalous';
+}
+
+function computeImportedHoldings(transactions: Transaction[]): ImportedHolding[] {
+  const byTicker: Record<string, Transaction[]> = {};
+  for (const t of transactions) {
+    (byTicker[t.ticker] = byTicker[t.ticker] ?? []).push(t);
+  }
+  const results: ImportedHolding[] = [];
+  for (const [ticker, txns] of Object.entries(byTicker)) {
+    const sorted = [...txns].sort(
+      (a, b) =>
+        a.trade_date.localeCompare(b.trade_date) || a.source_row - b.source_row,
+    );
+    let totalBuyQty = 0;
+    let totalBuyCost = 0;
+    let totalSellQty = 0;
+    const buyDates: string[] = [];
+    for (const t of sorted) {
+      const qty = Number(t.quantity);
+      const price = Number(t.price);
+      if (t.action === 'buy') {
+        totalBuyQty += qty;
+        totalBuyCost += qty * price;
+        buyDates.push(t.trade_date);
+      } else {
+        totalSellQty += qty;
+      }
+    }
+    const netQty = totalBuyQty - totalSellQty;
+    const avgCost = totalBuyQty > 0 ? totalBuyCost / totalBuyQty : 0;
+    results.push({
+      ticker,
+      net_quantity: netQty,
+      avg_cost: avgCost,
+      earliest_buy_date: buyDates.length > 0 ? buyDates.reduce((a, b) => (a < b ? a : b)) : '',
+      most_recent_buy_date: buyDates.length > 0 ? buyDates.reduce((a, b) => (a > b ? a : b)) : '',
+      status: netQty > 0 ? 'open' : netQty === 0 ? 'closed' : 'anomalous',
+    });
+  }
+  return results.sort((a, b) => a.ticker.localeCompare(b.ticker));
+}
 
 const SECTORS = [
   'Communication Services',
@@ -72,6 +128,79 @@ function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function levelStatusLabel(status: LevelBlock['status']) {
+  if (status === 'stop_breached') return 'Stop breached';
+  if (status === 'target_reached') return 'Target reached';
+  if (status === 'insufficient_data') return 'Insufficient data';
+  return 'Holding';
+}
+
+function levelSummary(block?: LevelBlock | null, ticker?: string) {
+  if (!block || block.levels_state === 'insufficient_data') {
+    return <span className="text-gray-500">Insufficient data</span>;
+  }
+  return (
+    <div className="space-y-1">
+      <div>
+        <span className="text-gray-500">Stop </span>
+        <span>{block.stop_loss ? formatMoney(block.stop_loss, ticker) : '-'}</span>
+      </div>
+      <div>
+        <span className="text-gray-500">Target </span>
+        <span>{block.take_profit ? formatMoney(block.take_profit, ticker) : '-'}</span>
+      </div>
+      <div className="text-xs text-gray-500">
+        {levelStatusLabel(block.status)}
+        {block.distance_to_stop_pct !== null && block.distance_to_stop_pct !== undefined
+          ? `, stop ${percent(block.distance_to_stop_pct)}`
+          : ''}
+        {block.distance_to_target_pct !== null && block.distance_to_target_pct !== undefined
+          ? `, target ${percent(block.distance_to_target_pct)}`
+          : ''}
+      </div>
+    </div>
+  );
+}
+
+function riskBindingLabel(value?: string | null) {
+  if (value === 'per_trade_budget') return 'Per-trade risk budget';
+  if (value === 'position_cap') return 'Position cap';
+  if (value === 'sector_cap') return 'Sector cap';
+  return 'Within configured limits';
+}
+
+function riskSummary(detail?: PortfolioHoldingWithLevels, ticker?: string) {
+  const risk = detail?.risk;
+  if (!risk) {
+    return <span className="text-gray-500">Not available</span>;
+  }
+  return (
+    <div className="space-y-1">
+      <div>
+        <span className="text-gray-500">Suggested </span>
+        <span>
+          {risk.recommended_shares.toLocaleString()} shares / {formatMoney(risk.recommended_value, ticker)}
+        </span>
+      </div>
+      <div>
+        <span className="text-gray-500">Actual </span>
+        <span>
+          {Number(risk.actual_shares).toLocaleString(undefined, { maximumFractionDigits: 4 })} shares / {formatMoney(risk.actual_value, ticker)}
+        </span>
+      </div>
+      <div className="text-xs text-gray-500">
+        Capital at risk {formatMoney(risk.actual_capital_at_risk, ticker)}
+        {' '}
+        ({percent(risk.actual_capital_at_risk_pct)})
+      </div>
+      <div className={risk.over_risk ? 'text-xs font-medium text-amber-800' : 'text-xs text-gray-500'}>
+        {risk.over_risk ? `Over risk: ${riskBindingLabel(risk.binding_constraint)}` : riskBindingLabel(null)}
+      </div>
+      {risk.fail_open ? <div className="text-xs text-gray-500">Baseline sizing used</div> : null}
+    </div>
+  );
+}
+
 function queryFromSettings(settings: ReturnType<typeof useAppStore.getState>['settings']) {
   const params = new URLSearchParams();
   if (settings.shariah_external_sources.length) {
@@ -95,6 +224,35 @@ export default function PortfolioPage() {
   const updateHolding = useAppStore((state) => state.updateHolding);
   const removeHolding = useAppStore((state) => state.removeHolding);
   const acknowledgeLocalStorageWarning = useAppStore((state) => state.acknowledgeLocalStorageWarning);
+  const setTransactions = useAppStore((s) => s.setTransactions);
+  const storeTransactions = useAppStore((s) => s.transactions);
+  const storeSheetId = useAppStore((s) => s.sheet_id);
+  const storeSheetRange = useAppStore((s) => s.sheet_range);
+
+  const importedHoldings = useMemo(
+    () => computeImportedHoldings(storeTransactions),
+    [storeTransactions],
+  );
+
+  // After a successful import, re-fetch the server blob to sync transactions into the store.
+  const handleImported = useCallback(
+    async (_result: ImportResult) => {
+      try {
+        const resp = await getPortfolioState();
+        if (resp.state) {
+          const raw = resp.state as Record<string, unknown>;
+          const txns = Array.isArray(raw.transactions) ? (raw.transactions as Transaction[]) : [];
+          const sheetId = typeof raw.sheet_id === 'string' ? raw.sheet_id : null;
+          const sheetRange = typeof raw.sheet_range === 'string' ? raw.sheet_range : null;
+          setTransactions(txns, sheetId, sheetRange);
+        }
+      } catch {
+        // Backend unreachable — the store already has the pre-import data
+      }
+    },
+    [setTransactions],
+  );
+
   const [statuses, setStatuses] = useState<Record<string, ShariahStatus>>({});
   const [form, setForm] = useState<HoldingForm>(blankForm());
   const [editingTicker, setEditingTicker] = useState<string | null>(null);
@@ -103,6 +261,15 @@ export default function PortfolioPage() {
   const [quotesAsOf, setQuotesAsOf] = useState<string | null>(null);
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [quotesError, setQuotesError] = useState<string | null>(null);
+  const [importedDetails, setImportedDetails] = useState<Record<string, PortfolioHoldingWithLevels>>({});
+  const [importedAsOf, setImportedAsOf] = useState<string | null>(null);
+  const [importedTotals, setImportedTotals] = useState<{
+    total_invested: string;
+    total_capital_at_risk: string;
+    total_capital_at_risk_pct: number;
+  } | null>(null);
+  const [importedDetailsLoading, setImportedDetailsLoading] = useState(false);
+  const [importedDetailsError, setImportedDetailsError] = useState<string | null>(null);
   const holdingsKey = useMemo(
     () => portfolio.holdings.map((holding) => holding.ticker).sort().join(','),
     [portfolio.holdings],
@@ -173,6 +340,43 @@ export default function PortfolioPage() {
     return () => window.removeEventListener('focus', handleFocus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdingsKey, settings.default_strategy_slug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadImportedDetails() {
+      if (!storeTransactions.length) {
+        setImportedDetails({});
+        setImportedAsOf(null);
+        setImportedTotals(null);
+        return;
+      }
+      setImportedDetailsLoading(true);
+      setImportedDetailsError(null);
+      try {
+        const response = await fetchHoldings({
+          total_capital: String(portfolio.total_capital || 1),
+          strategy_slug: settings.default_strategy_slug,
+        });
+        if (!cancelled) {
+          setImportedDetails(Object.fromEntries(response.holdings.map((holding) => [holding.ticker, holding])));
+          setImportedAsOf(response.data_as_of);
+          setImportedTotals(response.totals);
+        }
+      } catch {
+        if (!cancelled) {
+          setImportedDetailsError('Imported holding levels are unavailable.');
+        }
+      } finally {
+        if (!cancelled) {
+          setImportedDetailsLoading(false);
+        }
+      }
+    }
+    loadImportedDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [storeTransactions, portfolio.total_capital, settings.default_strategy_slug]);
 
   const derived = useMemo(() => {
     const holdings = portfolio.holdings.map((holding) => {
@@ -272,7 +476,7 @@ export default function PortfolioPage() {
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-gray-600">Stored locally in this browser.</p>
           <div className="flex flex-wrap items-center gap-2">
-            {quotesAsOf ? <AsOfBadge date={quotesAsOf} /> : null}
+            {importedAsOf ? <AsOfBadge date={importedAsOf} /> : quotesAsOf ? <AsOfBadge date={quotesAsOf} /> : null}
             <button
               className="border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-800 disabled:opacity-50"
               disabled={quotesLoading || portfolio.holdings.length === 0}
@@ -286,6 +490,106 @@ export default function PortfolioPage() {
       </header>
       {quotesError ? (
         <div className="border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{quotesError}</div>
+      ) : null}
+      {importedDetailsError ? (
+        <div className="border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{importedDetailsError}</div>
+      ) : null}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Feature 013 — Import transactions from Google Sheet                  */}
+      {/* ------------------------------------------------------------------ */}
+      <ImportTransactions onImported={handleImported} />
+
+      {importedHoldings.length > 0 ? (
+        <section aria-label="Imported holdings ledger" className="space-y-3">
+          <h2 className="text-lg font-semibold text-gray-950">Imported Holdings</h2>
+          <p className="text-xs text-gray-500">
+            Derived from {storeTransactions.length} imported transaction{storeTransactions.length !== 1 ? 's' : ''}.
+            {importedDetailsLoading ? ' Level details are refreshing.' : ' Level details are recomputed from the latest snapshot.'}
+          </p>
+          {importedTotals ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Total invested</div>
+                <div className="text-lg font-semibold text-gray-950">{formatMoney(importedTotals.total_invested)}</div>
+              </div>
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Total capital at risk</div>
+                <div className="text-lg font-semibold text-gray-950">{formatMoney(importedTotals.total_capital_at_risk)}</div>
+              </div>
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Risk as % of capital</div>
+                <div className="text-lg font-semibold text-gray-950">{percent(importedTotals.total_capital_at_risk_pct)}</div>
+              </div>
+            </div>
+          ) : null}
+          <div className="overflow-x-auto border border-gray-200">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="px-4 py-3">Ticker</th>
+                  <th className="px-4 py-3 text-right">Net shares</th>
+                  <th className="px-4 py-3 text-right">Avg cost</th>
+                  <th className="px-4 py-3">First purchase</th>
+                  <th className="px-4 py-3">Latest purchase</th>
+                  <th className="px-4 py-3 text-right">Current price</th>
+                  <th className="px-4 py-3 text-right">Unrealized P/L</th>
+                  <th className="px-4 py-3">Original plan</th>
+                  <th className="px-4 py-3">Current condition</th>
+                  <th className="px-4 py-3">Sizing & risk</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importedHoldings.map((h) => {
+                  const detail = importedDetails[h.ticker];
+                  return (
+                    <tr className="border-t border-gray-200" key={h.ticker}>
+                      <td className="px-4 py-3 font-semibold text-gray-950">{h.ticker}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">
+                        {h.net_quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">
+                        {formatMoney(h.avg_cost, h.ticker)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{h.earliest_buy_date}</td>
+                      <td className="px-4 py-3 text-gray-700">{h.most_recent_buy_date}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">
+                        {detail?.current_price ? formatMoney(detail.current_price, h.ticker) : '-'}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {detail?.unrealized_pl ? (
+                          <span className={Number(detail.unrealized_pl) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                            {formatMoney(detail.unrealized_pl, h.ticker)}
+                            {detail.unrealized_pl_pct !== null && detail.unrealized_pl_pct !== undefined
+                              ? ` (${percent(detail.unrealized_pl_pct)})`
+                              : ''}
+                          </span>
+                        ) : (
+                          <span className="text-gray-500">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{levelSummary(detail?.levels?.original_plan, h.ticker)}</td>
+                      <td className="px-4 py-3 text-gray-700">{levelSummary(detail?.levels?.current_condition, h.ticker)}</td>
+                      <td className="px-4 py-3 text-gray-700">{riskSummary(detail, h.ticker)}</td>
+                      <td className="px-4 py-3">
+                        {detail && !detail.priceable ? (
+                          <span className="text-amber-800">{detail.data_notes[0] ?? 'Out of coverage'}</span>
+                        ) : h.status === 'open' ? (
+                          <span className="text-gray-700">Open</span>
+                        ) : h.status === 'closed' ? (
+                          <span className="text-gray-500">Closed</span>
+                        ) : (
+                          <span className="text-amber-800">Anomalous - net quantity is negative</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : null}
 
       <section className="grid gap-4 md:grid-cols-4">

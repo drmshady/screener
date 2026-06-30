@@ -1,16 +1,31 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/012-entry-timing-coverage/plan.md` (active feature 012), which builds on
-the 011 auto-refresh-risk-sizing, 010 online-deployment, 009 release-readiness, 008
-momentum data-integrity, 006 side-by-side compare, 005 value strategy, 004 advisor
-export, 003 comparison, 002 validation, and 001 MVP below.
+`specs/013-portfolio-import-sizing/plan.md` (active feature 013), which builds on
+the 012 entry-timing-coverage, 011 auto-refresh-risk-sizing, 010 online-deployment,
+009 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005
+value strategy, 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 012-entry-timing-coverage
+## Active feature: 013-portfolio-import-sizing
 
-Plan: `specs/012-entry-timing-coverage/plan.md`. This active feature adds the
-momentum-only entry-timing overlay, opt-in expanded coverage, and the 90-day
-Halal Terminal refresh cadence. Older feature summaries remain below for context.
+Plan: `specs/013-portfolio-import-sizing/plan.md`. This active feature turns the
+portfolio into a record of what the owner actually bought: the browser reads the
+owner's Google Sheet of buy/sell transactions via a short-lived read-only OAuth token
+(extending feature 010's Google sign-in) and POSTs parsed rows to a new
+`POST /portfolio/import`; the backend validates, aggregates into one average-cost
+holding per ticker, and persists into the existing single-owner blob. A new
+`POST /portfolio/holdings` returns, per holding, BOTH an original-plan and a
+current-condition stop/target (purchase-price-anchored, reusing feature 011's
+`derive_bounded_levels` with `entry` = avg cost and volatility from
+`build_single_ticker_snapshot(ticker, as_of=earliest_buy_date)`), plus a risk-aware
+sizing view (recommended-vs-actual size + capital-at-risk, reusing `size_position`).
+No strategy rule, default, citation, indicator, or backtest baseline changes. Older
+feature summaries remain below for context.
+
+## Prior feature: 012-entry-timing-coverage
+
+Plan: `specs/012-entry-timing-coverage/plan.md`. Added the momentum-only entry-timing
+overlay, opt-in expanded coverage, and the 90-day Halal Terminal refresh cadence.
 
 ## Prior feature: 011-auto-refresh-risk-sizing
 
