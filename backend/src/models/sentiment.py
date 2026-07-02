@@ -91,7 +91,7 @@ class Selection(BaseModel):
 
 
 class ReportRequest(BaseModel):
-    selections: list[Selection] = Field(min_length=1)
+    selections: list[Selection] = Field(default_factory=list)
 
 
 class SpendLedger(BaseModel):

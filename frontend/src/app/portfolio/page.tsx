@@ -5,6 +5,7 @@ import { AsOfBadge } from '@/components/AsOfBadge';
 import { CopyHoldingAdvisorPrompt } from '@/components/CopyHoldingAdvisorPrompt';
 import { ImportTransactions } from '@/components/ImportTransactions';
 import { PortfolioAllocationChart } from '@/components/ChartPanels';
+import { SentimentReport } from '@/components/SentimentReport';
 import { ShariahBadge } from '@/components/ShariahBadge';
 import {
   ImportResult,
@@ -12,6 +13,7 @@ import {
   PortfolioQuote,
   PortfolioHoldingWithLevels,
   PortfolioQuotesResponseSchema,
+  SentimentSelection,
   ShariahStatus,
   ShariahStatusSchema,
   fetchApi,
@@ -284,6 +286,32 @@ export default function PortfolioPage() {
   const [importedDetailsLoading, setImportedDetailsLoading] = useState(false);
   const [importedDetailsError, setImportedDetailsError] = useState<string | null>(null);
   const [removingTicker, setRemovingTicker] = useState<string | null>(null);
+  // US4 (feature 014): owner selects holdings and runs the same on-request
+  // sentiment report used on /sentiment, reusing the SentimentReport component.
+  // Only selected holdings are ever sent (origin:"holding"); unselected ones are
+  // never analyzed.
+  const [sentimentTickers, setSentimentTickers] = useState<Set<string>>(() => new Set());
+  const [sentimentSelections, setSentimentSelections] = useState<SentimentSelection[] | null>(null);
+
+  function toggleSentimentTicker(ticker: string) {
+    setSentimentTickers((current) => {
+      const next = new Set(current);
+      if (next.has(ticker)) {
+        next.delete(ticker);
+      } else {
+        next.add(ticker);
+      }
+      return next;
+    });
+  }
+
+  function runHoldingsSentiment() {
+    if (!sentimentTickers.size) return;
+    setSentimentSelections(
+      Array.from(sentimentTickers).map((ticker) => ({ ticker, origin: 'holding' as const })),
+    );
+  }
+
   const holdingsKey = useMemo(
     () => portfolio.holdings.map((holding) => holding.ticker).sort().join(','),
     [portfolio.holdings],
@@ -744,10 +772,22 @@ export default function PortfolioPage() {
           {portfolio.holdings.length === 0 ? (
             <div className="border border-gray-200 p-6 text-sm text-gray-600">{COPY.PORTFOLIO.EMPTY_STATE}</div>
           ) : (
+            <>
+            <div className="flex justify-end">
+              <button
+                className="border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-800 disabled:opacity-50"
+                disabled={sentimentTickers.size === 0}
+                onClick={runHoldingsSentiment}
+                type="button"
+              >
+                Run sentiment report{sentimentTickers.size ? ` (${sentimentTickers.size})` : ''}
+              </button>
+            </div>
             <div className="overflow-x-auto border border-gray-200">
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                   <tr>
+                    <th className="px-4 py-3">Report</th>
                     <th className="px-4 py-3">Ticker</th>
                     <th className="px-4 py-3">Sector</th>
                     <th className="px-4 py-3 text-right">Shares</th>
@@ -763,6 +803,14 @@ export default function PortfolioPage() {
                 <tbody>
                   {derived.holdings.map((holding) => (
                     <tr className="border-t border-gray-200" key={`${holding.ticker}-${holding.added_at}`}>
+                      <td className="px-4 py-3">
+                        <input
+                          aria-label={`Select ${holding.ticker} for sentiment report`}
+                          checked={sentimentTickers.has(holding.ticker)}
+                          onChange={() => toggleSentimentTicker(holding.ticker)}
+                          type="checkbox"
+                        />
+                      </td>
                       <td className="px-4 py-3 font-semibold text-gray-950">{holding.ticker}</td>
                       <td className="px-4 py-3 text-gray-700">{holding.sector}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{holding.shares}</td>
@@ -815,6 +863,16 @@ export default function PortfolioPage() {
                 </tbody>
               </table>
             </div>
+            {sentimentSelections ? (
+              <section aria-label="Holdings sentiment report" className="space-y-3">
+                <h2 className="text-lg font-semibold text-gray-950">Holdings Sentiment Report</h2>
+                <SentimentReport
+                  initialSelections={sentimentSelections}
+                  key={sentimentSelections.map((selection) => selection.ticker).join(',')}
+                />
+              </section>
+            ) : null}
+            </>
           )}
 
           <section className="grid gap-4 md:grid-cols-2">

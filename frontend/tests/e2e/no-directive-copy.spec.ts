@@ -6,6 +6,7 @@ const ROUTES = [
   '/screen/midterm_52w_high_momentum',
   '/screen/midterm_value_composite',
   '/analyze',
+  '/sentiment',
   '/candidate/HFRO',
   '/watchlist',
   '/portfolio',
@@ -373,4 +374,66 @@ test('no directive trading language on the watchlist entry-readiness surface', a
   await expect(page.getByText('Newly ready')).toBeVisible();
 
   await assertNoDirectiveCopy(page);
+});
+
+test('sentiment report renders identical sourced copy for the same selection', async ({ page }) => {
+  let requestCount = 0;
+  await page.route('**/sentiment/report', async (route) => {
+    const body = route.request().postDataJSON() as { selections: { ticker: string }[] };
+    expect(body.selections.map((selection) => selection.ticker)).toEqual(['NVDA']);
+    requestCount += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        reports: [
+          {
+            ticker: 'NVDA',
+            origin: 'screener',
+            label: 'positive',
+            label_basis: 'Fixture score from sourced headlines.',
+            sentiment_composite: 0.42,
+            narrative_risk: {
+              score: 18,
+              label: 'Low narrative activity',
+              signals: ['theme_repetition:low'],
+            },
+            narrative: 'NVDA recent sourced context: Fixture News on 2026-07-01: Guidance raised after strong demand.',
+            narrative_source: 'template',
+            budget_state: 'ok',
+            source_classes_present: ['news'],
+            source_classes_omitted: ['filing_8k', 'earnings', 'analyst_opinion', 'social'],
+            sources: [
+              {
+                id: 'fixture:nvda:1',
+                source_class: 'news',
+                title: 'Guidance raised after strong demand',
+                publisher: 'Fixture News',
+                published_at: '2026-07-01T12:00:00Z',
+                reference_url: 'https://example.test/nvda',
+                is_stale: false,
+                score: 0.42,
+              },
+            ],
+            fingerprint: 'sha256:fixture',
+            resolution: null,
+          },
+        ],
+        period_spend_usd: '0',
+        monthly_cap_usd: '5.00',
+        data_as_of: '2026-07-02T21:00:00Z',
+        disclaimer: 'Fixture disclaimer',
+      }),
+    });
+  });
+
+  await page.goto('/sentiment?ticker=NVDA&origin=screener');
+  await page.getByRole('button', { name: 'Run report' }).click();
+  await expect(page.getByText('NVDA recent sourced context')).toBeVisible();
+  const firstRender = await page.locator('article').innerText();
+  await assertNoDirectiveCopy(page);
+
+  await page.getByRole('button', { name: 'Run report' }).click();
+  await expect(page.locator('article')).toHaveCount(1);
+  expect(await page.locator('article').innerText()).toBe(firstRender);
+  expect(requestCount).toBe(2);
 });

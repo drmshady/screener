@@ -4,6 +4,7 @@ import { COPY } from '../../src/lib/copy';
 const ROUTES = [
   '/',
   '/screen/midterm_52w_high_momentum',
+  '/sentiment',
   '/candidate/HFRO',
   '/watchlist',
   '/portfolio',

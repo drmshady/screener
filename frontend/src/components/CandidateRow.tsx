@@ -227,6 +227,12 @@ export function CandidateRow({
           strategySlug={strategySlug}
           buttonClassName="w-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100"
         />
+        <Link
+          className="block w-full border border-slate-300 px-3 py-1.5 text-center text-sm font-medium text-slate-800 hover:bg-slate-100"
+          href={`/sentiment?ticker=${encodeURIComponent(candidate.ticker)}&origin=screener`}
+        >
+          Sentiment
+        </Link>
         <button
           type="button"
           className="w-full border border-slate-950 bg-slate-950 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"

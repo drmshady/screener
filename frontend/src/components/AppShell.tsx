@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { href: '/', label: 'Home' },
   { href: '/screen/midterm_52w_high_momentum', label: 'Screens' },
   { href: '/analyze', label: 'Analyze' },
+  { href: '/sentiment', label: 'Sentiment' },
   { href: '/watchlist', label: 'Watchlist' },
   { href: '/portfolio', label: 'Portfolio' },
   { href: '/settings', label: 'Settings' },

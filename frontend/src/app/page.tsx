@@ -42,6 +42,10 @@ export default function Home() {
           <div className="text-lg font-semibold text-slate-950">Watchlist</div>
           <p className="mt-2 text-sm text-slate-600">Review saved candidates and captured levels from this browser.</p>
         </Link>
+        <Link className="panel p-5 hover:border-slate-400" href="/sentiment">
+          <div className="text-lg font-semibold text-slate-950">Sentiment Report</div>
+          <p className="mt-2 text-sm text-slate-600">Run a sourced narrative report for selected tickers.</p>
+        </Link>
         <Link className="panel p-5 hover:border-slate-400" href="/portfolio">
           <div className="text-lg font-semibold text-slate-950">Portfolio</div>
           <p className="mt-2 text-sm text-slate-600">Review local holdings with Shariah source labels and summary counts.</p>

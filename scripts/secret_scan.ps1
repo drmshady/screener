@@ -43,7 +43,11 @@ $SecretNames = @(
     'AUTH_GOOGLE_ID',
     'EODHD_API_KEY',
     'EOD_HISTORICAL_DATA_API_KEY',
-    'SCREENER_PROVIDER_KEY'
+    'SCREENER_PROVIDER_KEY',
+    'FINNHUB_API_KEY',
+    'ALPHAVANTAGE_API_KEY',
+    'GEMINI_API_KEY',
+    'ANTHROPIC_API_KEY'
 )
 
 $PlaceholderRegex = '(?i)(\$env:|process\.env|os\.getenv|os\.environ|getenv|sync:|your[-_]|example|changeme|placeholder|xxxx|from a2|same as|token_urlsafe|replace|redacted)'

@@ -22,6 +22,7 @@ from . import (
     screen,
     shariah,
     sizing,
+    sentiment,
     strategies,
     verify,
 )
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
     app.include_router(shariah.router)
     app.include_router(sizing.router)
     app.include_router(portfolio.router)
+    app.include_router(sentiment.router)
     app.include_router(screen.router)
     app.include_router(data.router)
     app.include_router(verify.router)

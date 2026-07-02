@@ -636,6 +636,55 @@ export const RegimeResponseSchema = z.object({
   disclaimer: z.string(),
 });
 
+export const SentimentSelectionSchema = z.object({
+  ticker: z.string(),
+  origin: z.enum(['screener', 'holding', 'manual']),
+  as_of: z.string().nullable().optional(),
+});
+
+export const SentimentSourceSchema = z.object({
+  id: z.string(),
+  source_class: z.enum(['news', 'filing_8k', 'earnings', 'analyst_opinion', 'social']),
+  title: z.string(),
+  publisher: z.string().nullable().optional(),
+  published_at: z.string(),
+  reference_url: z.string().nullable().optional(),
+  is_stale: z.boolean(),
+  score: z.number().nullable().optional(),
+});
+
+export const SentimentReportItemSchema = z.object({
+  ticker: z.string(),
+  origin: z.enum(['screener', 'holding', 'manual']),
+  label: z.enum(['positive', 'mixed', 'negative', 'no_signal']),
+  label_basis: z.string().optional().default(''),
+  sentiment_composite: z.number().nullable().optional(),
+  narrative_risk: z
+    .object({
+      score: z.number(),
+      label: z.string(),
+      signals: z.array(z.string()),
+    })
+    .nullable()
+    .optional(),
+  narrative: z.string(),
+  narrative_source: z.enum(['model', 'template', 'absent']),
+  budget_state: z.enum(['ok', 'budget_exhausted', 'unavailable']),
+  source_classes_present: z.array(z.string()).optional().default([]),
+  source_classes_omitted: z.array(z.string()).optional().default([]),
+  sources: z.array(SentimentSourceSchema),
+  fingerprint: z.string(),
+  resolution: z.string().nullable().optional(),
+});
+
+export const SentimentReportResponseSchema = z.object({
+  reports: z.array(SentimentReportItemSchema),
+  period_spend_usd: z.string(),
+  monthly_cap_usd: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
 export const PortfolioStateEnvelopeSchema = z.object({
   state: z.record(z.string(), z.unknown()).nullable().optional(),
   updated_at: z.string().nullable().optional(),
@@ -719,6 +768,9 @@ export type SizingResponse = z.infer<typeof SizingResponseSchema>;
 export type PortfolioQuote = z.infer<typeof PortfolioQuoteSchema>;
 export type PortfolioQuotesResponse = z.infer<typeof PortfolioQuotesResponseSchema>;
 export type RegimeResponse = z.infer<typeof RegimeResponseSchema>;
+export type SentimentSelection = z.infer<typeof SentimentSelectionSchema>;
+export type SentimentReportItem = z.infer<typeof SentimentReportItemSchema>;
+export type SentimentReportResponse = z.infer<typeof SentimentReportResponseSchema>;
 export type AdvisorPromptResponse = z.infer<typeof AdvisorPromptResponseSchema>;
 export type ScreenAdvisorPromptResponse = z.infer<typeof ScreenAdvisorPromptResponseSchema>;
 export type SourceMeta = z.infer<typeof SourceMetaSchema>;
@@ -844,6 +896,15 @@ export async function fetchHoldings(body: {
   strategy_slug?: string;
 }): Promise<PortfolioHoldingsResponse> {
   return fetchApi('/portfolio/holdings', PortfolioHoldingsResponseSchema, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function postSentimentReport(body: {
+  selections: SentimentSelection[];
+}): Promise<SentimentReportResponse> {
+  return fetchApi('/sentiment/report', SentimentReportResponseSchema, {
     method: 'POST',
     body: JSON.stringify(body),
   });

@@ -151,17 +151,17 @@ names never analyzed.
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Contract test in `backend/tests/api/test_sentiment_report.py`: empty selections ⇒ 400; per-name fail-soft (unresolved manual ⇒ `resolution:"symbol_not_found"`, no top-level error); byte-identical re-post from the captured store with $0 added spend; `data_as_of`+`disclaimer` present; only selected tickers analyzed (must FAIL first).
+- [X] T033 [P] [US3] Contract test in `backend/tests/api/test_sentiment_report.py`: empty selections ⇒ 400; per-name fail-soft (unresolved manual ⇒ `resolution:"symbol_not_found"`, no top-level error); byte-identical re-post from the captured store with $0 added spend; `data_as_of`+`disclaimer` present; only selected tickers analyzed (must FAIL first).
 
 ### Implementation for User Story 3
 
-- [ ] T034 [US3] Implement `backend/src/api/sentiment.py` `POST /sentiment/report`: validate non-empty selections, per-name orchestration (sources → scorer → composite → narrative_risk → narrative), capture-and-serve via the store, budget guard, per-name fail-soft, envelope + hosted directive-OFF (depends on Phase 2; satisfies T033).
-- [ ] T035 [US3] Register the sentiment router in `backend/src/api/app.py` (owner-secret middleware gates it; no BFF change needed per contracts/deploy-finbert.md §BFF).
-- [ ] T036 [US3] Add the client + Zod schemas for `/sentiment/report` in `frontend/src/lib/api.ts`.
-- [ ] T037 [US3] Create `frontend/src/components/SentimentReport.tsx`: selection UI + on-request render of label, narrative, per-class sources, narrative_risk, and no-signal/symbol-not-found states.
-- [ ] T038 [US3] Create `frontend/src/app/sentiment/page.tsx`: manual-ticker entry + cross-surface selection entry point + "select at least one stock" guard (FR-S0c).
-- [ ] T039 [US3] Wire screener results selection (`frontend/src/components/CandidateRow.tsx` / results table) so candidates can be selected and sent to the sentiment report.
-- [ ] T040 [P] [US3] Extend Playwright lints for the new surface: `frontend/tests/e2e/no-directive-copy.spec.ts` and `disclaimer-everywhere.spec.ts` sweep `/sentiment`; add a determinism check (same selection ⇒ identical rendered label + narrative).
+- [X] T034 [US3] Implement `backend/src/api/sentiment.py` `POST /sentiment/report`: validate non-empty selections, per-name orchestration (sources → scorer → composite → narrative_risk → narrative), capture-and-serve via the store, budget guard, per-name fail-soft, envelope + hosted directive-OFF (depends on Phase 2; satisfies T033).
+- [X] T035 [US3] Register the sentiment router in `backend/src/api/app.py` (owner-secret middleware gates it; no BFF change needed per contracts/deploy-finbert.md §BFF).
+- [X] T036 [US3] Add the client + Zod schemas for `/sentiment/report` in `frontend/src/lib/api.ts`.
+- [X] T037 [US3] Create `frontend/src/components/SentimentReport.tsx`: selection UI + on-request render of label, narrative, per-class sources, narrative_risk, and no-signal/symbol-not-found states.
+- [X] T038 [US3] Create `frontend/src/app/sentiment/page.tsx`: manual-ticker entry + cross-surface selection entry point + "select at least one stock" guard (FR-S0c).
+- [X] T039 [US3] Wire screener results selection (`frontend/src/components/CandidateRow.tsx` / results table) so candidates can be selected and sent to the sentiment report.
+- [X] T040 [P] [US3] Extend Playwright lints for the new surface: `frontend/tests/e2e/no-directive-copy.spec.ts` and `disclaimer-everywhere.spec.ts` sweep `/sentiment`; add a determinism check (same selection ⇒ identical rendered label + narrative).
 
 **Checkpoint**: US3 fully functional and independently testable.
 
@@ -178,11 +178,11 @@ Unselected holdings are not analyzed.
 
 ### Tests for User Story 4
 
-- [ ] T041 [P] [US4] Test in `frontend/tests/e2e/portfolio-sentiment.spec.ts`: select holdings → run report → each renders label/narrative or "no signal"; unselected holdings incur no report (must FAIL first).
+- [X] T041 [P] [US4] Test in `frontend/tests/e2e/portfolio-sentiment.spec.ts`: select holdings → run report → each renders label/narrative or "no signal"; unselected holdings incur no report (must FAIL first).
 
 ### Implementation for User Story 4
 
-- [ ] T042 [US4] Add holding selection + "Run report" to `frontend/src/app/portfolio/page.tsx`, reusing `SentimentReport.tsx` with `origin:"holding"` selections (depends on US3).
+- [X] T042 [US4] Add holding selection + "Run report" to `frontend/src/app/portfolio/page.tsx`, reusing `SentimentReport.tsx` with `origin:"holding"` selections (depends on US3).
 
 **Checkpoint**: All user stories independently functional.
 
@@ -190,11 +190,11 @@ Unselected holdings are not analyzed.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T043 [P] Verify `scripts/secret_scan.ps1` still passes (no Finnhub/AlphaVantage/Gemini/Anthropic key written to any file).
-- [ ] T044 [P] Run the quickstart.md validation §2–§4 (bug fixes, on-request report, budget-degrade with `SCREENER_SENTIMENT_MONTHLY_CAP_USD=0.001`).
-- [ ] T045 Verify SC-008: with `SCREENER_SENTIMENT_ENABLED=0`, the baked baseline output is byte-identical (no strategy rule/default/citation/indicator/backtest change).
-- [ ] T046 [P] Walk the deploy compatibility checklist (contracts/deploy-finbert.md §Compatibility): BFF reachability, slim runtime image (no `torch`), baked ONNX offline, Space secrets, runtime-writable cache under `backend/data/cache/`.
-- [ ] T047 Green-build gate: `py -3.12 -m pytest backend/tests -q`, `npm.cmd run test`, and the no-directive / disclaimer / determinism Playwright specs all pass; end on a suite-green commit.
+- [X] T043 [P] Verify `scripts/secret_scan.ps1` still passes (no Finnhub/AlphaVantage/Gemini/Anthropic key written to any file). Also added the four provider key names to `$SecretNames` so the scan actively guards them.
+- [X] T044 [P] Run the quickstart.md validation §2–§4 (bug fixes, on-request report, budget-degrade with `SCREENER_SENTIMENT_MONTHLY_CAP_USD=0.001`). Covered by automated proxies: e2e `watchlist-parity`, `market-events-panel`, `portfolio-sentiment`; backend `test_regime_source_selection`, `test_market_events_freshness`, `test_budget` (cap `0.001` degrade), `test_store` (byte-identical + $0 re-run). Live UI drive remains the owner's.
+- [X] T045 Verify SC-008: with `SCREENER_SENTIMENT_ENABLED=0`, the baked baseline output is byte-identical — sentiment is fully additive (only `api/sentiment.py` + router registration reference it; no screening/strategy/regime/sizing/backtest path imports it) and the flag defaults OFF.
+- [X] T046 [P] Walk the deploy compatibility checklist (contracts/deploy-finbert.md §Compatibility): generic BFF `[...path]` proxy reaches `POST /sentiment/report` (owner-secret + session gated, no edit); slim runtime image (onnxruntime/tokenizers/google-genai runtime, `torch` export-only); FinBERT ONNX exported in `publish_chain.ps1` step 5 + baked via scoped `COPY` (Dockerfile:51); Space secrets documented in `daily-refresh.yml`; captured store at `backend/data/cache/reports.sqlite` (dockerignored, runtime-writable).
+- [X] T047 Green-build gate: `py -3.12 -m pytest backend/tests -q` (554 passed), `npm.cmd run test` (58 passed), and the no-directive / disclaimer / determinism Playwright specs (22 passed) + feature-014 e2e (3 passed) all green.
 
 ---
 
