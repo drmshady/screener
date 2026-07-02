@@ -439,7 +439,20 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
             </div>
           ) : (
             <div className="overflow-x-auto border border-slate-200 bg-white">
-              <table className="data-table data-table--wide">
+              <table className="data-table data-table--wide table-fixed">
+                <colgroup>
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '10%' }} />
+                </colgroup>
                 <thead>
                   <tr>
                     <th className="px-4 py-3">Ticker</th>

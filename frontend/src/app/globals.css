@@ -135,6 +135,18 @@ select:focus-visible {
    column (the watchlist button) so it was only legible in landscape. */
 .data-table--wide {
   min-width: 72rem;
+  table-layout: fixed;
+}
+
+/* Fixed layout gives every column a guaranteed share (see the <colgroup> on the
+   screener results table) so the text-heavy columns (Reason, Stop rationale)
+   can't be starved into one-word-per-line wrapping. Tighter cell padding buys
+   back horizontal room so short numeric columns ($318.06) don't wrap. */
+.data-table--wide th,
+.data-table--wide td {
+  padding: 0.5rem 0.6rem;
+  overflow-wrap: break-word;
+  vertical-align: top;
 }
 
 .data-table th {
