@@ -70,7 +70,10 @@ def _collect_yfinance_analyst_opinion(ticker: str, *, now: datetime) -> list[Sou
         return []
     out: list[SourceItem] = []
     try:
-        recent = rows.tail(10)
+        # yfinance returns upgrades_downgrades indexed by GradeDate, newest-first,
+        # so .tail(10) grabbed the 10 OLDEST rows (decade-old ratings). Sort by
+        # date descending and take the 10 most recent regardless of source order.
+        recent = rows.sort_index(ascending=False).head(10)
         for idx, row in recent.iterrows():
             firm = str(row.get("Firm") or row.get("firm") or "analyst opinion")
             action = str(row.get("Action") or row.get("action") or "opinion update")
