@@ -21,12 +21,19 @@ def _spy_inputs(
     as_of_date: str | None = None,
     spy_prices: pd.DataFrame | None = None,
     sma_length: int = 200,
-) -> tuple[float | None, float | None, bool | None, date, str]:
+) -> tuple[float | None, float | None, bool | None, date, str, str | None]:
     source = "injected"
     if spy_prices is None:
         spy_prices, source = _load_spy(as_of_date, sma_length)
     if spy_prices is None or spy_prices.empty:
-        return None, None, None, date.today(), source
+        return (
+            None,
+            None,
+            None,
+            date.today(),
+            source,
+            "SPY price data unavailable; regime gate fails open.",
+        )
 
     frame = spy_prices.copy()
     frame["as_of_date"] = pd.to_datetime(frame["as_of_date"])
@@ -34,20 +41,40 @@ def _spy_inputs(
         frame = frame[frame["as_of_date"] <= pd.Timestamp(as_of_date)]
     frame = frame.dropna(subset=["close"]).sort_values("as_of_date")
     if frame.empty:
-        return None, None, None, date.today(), source
+        return (
+            None,
+            None,
+            None,
+            date.today(),
+            source,
+            "SPY price data unavailable for the requested date; regime gate fails open.",
+        )
     close = frame["close"].astype(float)
     last_date = pd.Timestamp(frame["as_of_date"].iloc[-1]).date()
     if len(close) < sma_length:
-        return float(close.iloc[-1]), None, None, last_date, source
+        return (
+            float(close.iloc[-1]),
+            None,
+            None,
+            last_date,
+            source,
+            f"Insufficient SPY history for a {sma_length}-day SMA; regime gate fails open.",
+        )
     sma = calculate_sma(close, sma_length)
     last_close = float(close.iloc[-1])
     last_sma = float(sma.iloc[-1]) if not pd.isna(sma.iloc[-1]) else None
+    unavailable_reason = (
+        f"SPY {sma_length}-day SMA is unavailable; regime gate fails open."
+        if last_sma is None
+        else None
+    )
     return (
         last_close,
         last_sma,
         None if last_sma is None else last_close > last_sma,
         last_date,
         source,
+        unavailable_reason,
     )
 
 
@@ -86,7 +113,7 @@ def current_regime_response(
     constituents: list[str] | None = None,
     force_breadth_refresh: bool = False,
 ) -> RegimeResponse:
-    spy_close, spy_sma, spy_above, spy_as_of, spy_source = _spy_inputs(
+    spy_close, spy_sma, spy_above, spy_as_of, spy_source, spy_unavailable_reason = _spy_inputs(
         as_of_date=as_of_date,
         spy_prices=spy_prices,
     )
@@ -109,6 +136,7 @@ def current_regime_response(
             breadth_eligible_count=breadth.eligible_count,
             breadth_total_constituents=breadth.total_constituents,
             price_source_name=spy_source,
+            unavailable_reason=spy_unavailable_reason,
             breadth_source_name=breadth.source_name,
             breadth_source_as_of=breadth.source_as_of,
         ),

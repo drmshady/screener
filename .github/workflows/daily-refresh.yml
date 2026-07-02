@@ -44,7 +44,7 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
 
       - name: Install backend dependencies
-        run: pip install -e "backend[dev]"
+        run: pip install -e "backend[dev,export]"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -73,6 +73,9 @@ jobs:
           HALAL_TERMINAL_API_KEY: ${{ secrets.HALAL_TERMINAL_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          # Feature 014 runtime sentiment secrets are configured on the HF Space,
+          # not written here: FINNHUB_API_KEY, ALPHAVANTAGE_API_KEY, GEMINI_API_KEY,
+          # and optional ANTHROPIC_API_KEY.
           # Scheduled (cron) runs keep the new-session guard so non-trading days
           # are a documented no-op. A manual force_rebuild dispatch adds -SkipGuard
           # so a code-only deploy rebuilds even with no fresh session. Explicit

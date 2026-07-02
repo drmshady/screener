@@ -104,24 +104,43 @@ def refresh_spy_history(
 
 
 def _load_spy(as_of_date: str | None, sma_length: int) -> tuple[pd.DataFrame | None, str]:
-    # Prefer current EOD from yfinance; fall back to the daily-baked SPY parquet
-    # (the hosted offline source) and then the local Stooq archive, so the gate
-    # still computes a real regime when yfinance is unavailable/rate-limited.
+    # Prefer the freshest source that can actually compute the requested SMA.
+    # A short live frame is worse than a full daily-baked/offline frame because
+    # it would turn an otherwise computable regime into a transient Unknown.
+    def usable_rows(frame: pd.DataFrame | None) -> int:
+        if frame is None or frame.empty or "as_of_date" not in frame or "close" not in frame:
+            return 0
+        candidate = frame.copy()
+        candidate["as_of_date"] = pd.to_datetime(candidate["as_of_date"], errors="coerce")
+        if as_of_date:
+            candidate = candidate[candidate["as_of_date"] <= pd.Timestamp(as_of_date)]
+        return len(candidate.dropna(subset=["as_of_date", "close"]))
+
     end = (pd.Timestamp(as_of_date).date() if as_of_date else date.today()) + timedelta(days=1)
     start = end - timedelta(days=int(sma_length * 2.2) + 60)
+    best: tuple[pd.DataFrame | None, str, int] = (None, "none", 0)
     try:
         df = YFinancePriceProvider().fetch_ohlcv(["SPY"], start_date=start, end_date=end)
-        if df is not None and not df.empty:
+        rows = usable_rows(df)
+        if rows >= sma_length:
             return df, "yfinance"
+        if rows > best[2]:
+            best = (df, "yfinance", rows)
     except Exception:
         pass
     baked = _spy_from_baked()
-    if baked is not None and not baked.empty:
+    rows = usable_rows(baked)
+    if rows >= sma_length:
         return baked, "baked(daily)"
+    if rows > best[2]:
+        best = (baked, "baked(daily)", rows)
     stooq = _spy_from_stooq()
-    if stooq is not None and not stooq.empty:
+    rows = usable_rows(stooq)
+    if rows >= sma_length:
         return stooq, "stooq(local)"
-    return None, "none"
+    if rows > best[2]:
+        best = (stooq, "stooq(local)", rows)
+    return best[0], best[1]
 
 
 def market_regime(

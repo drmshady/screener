@@ -618,6 +618,7 @@ export const RegimeResponseSchema = z.object({
     breadth_eligible_count: z.number(),
     breadth_total_constituents: z.number(),
     price_source_name: z.string(),
+    unavailable_reason: z.string().nullable().optional(),
     breadth_source_name: z.string(),
     breadth_source_as_of: z.string().nullable().optional(),
   }),

@@ -24,6 +24,81 @@ def personal_use_directive() -> bool:
     return os.getenv("SCREENER_PERSONAL_USE_DIRECTIVE", "0").strip().lower() in _TRUTHY
 
 
+# --- Feature 014: sentiment and narrative overlay knobs --------------------
+
+_SENTIMENT_SCORERS = {"finbert", "lexicon"}
+_SENTIMENT_LLM_PROVIDERS = {"gemini", "anthropic", "none"}
+
+
+def sentiment_enabled() -> bool:
+    """Whether the on-request sentiment overlay is available.
+
+    DEFAULT OFF so existing screens, rankings, levels, and backtests remain
+    byte-identical until the owner explicitly enables the presentation layer.
+    Override with SCREENER_SENTIMENT_ENABLED=1.
+    """
+    return os.getenv("SCREENER_SENTIMENT_ENABLED", "0").strip().lower() in _TRUTHY
+
+
+def sentiment_scorer() -> str:
+    """Sentiment scorer backend: "finbert" or "lexicon".
+
+    Default "finbert" uses the baked ONNX model when available. "lexicon" is the
+    deterministic light fallback for hosted or model-missing deployments.
+    Override with SCREENER_SENTIMENT_SCORER.
+    """
+    value = os.getenv("SCREENER_SENTIMENT_SCORER", "finbert").strip().lower()
+    return value if value in _SENTIMENT_SCORERS else "finbert"
+
+
+def sentiment_news_providers() -> list[str]:
+    """Ordered fail-soft provider chain for sentiment source collection."""
+    raw = os.getenv("SCREENER_SENTIMENT_NEWS_PROVIDERS", "yfinance").strip()
+    providers = [provider.strip().lower() for provider in raw.split(",")]
+    return [provider for provider in providers if provider]
+
+
+def sentiment_llm_provider() -> str:
+    """Optional narrative prose provider: "gemini", "anthropic", or "none"."""
+    value = os.getenv("SCREENER_SENTIMENT_LLM_PROVIDER", "gemini").strip().lower()
+    return value if value in _SENTIMENT_LLM_PROVIDERS else "gemini"
+
+
+def sentiment_llm_model() -> str | None:
+    """Provider-specific narrative model override."""
+    return os.getenv("SCREENER_SENTIMENT_LLM_MODEL") or None
+
+
+def sentiment_monthly_cap_usd() -> float:
+    """Hard monthly spend cap for optional paid sentiment narrative calls."""
+    return float(os.getenv("SCREENER_SENTIMENT_MONTHLY_CAP_USD", "5.00"))
+
+
+def sentiment_social_enabled() -> bool:
+    """Whether the deferred social sentiment source class is enabled."""
+    return os.getenv("SCREENER_SENTIMENT_SOCIAL", "0").strip().lower() in _TRUTHY
+
+
+def finnhub_api_key() -> str | None:
+    """Finnhub runtime key, read from process env only."""
+    return os.getenv("FINNHUB_API_KEY") or None
+
+
+def alphavantage_api_key() -> str | None:
+    """Alpha Vantage runtime key, read from process env only."""
+    return os.getenv("ALPHAVANTAGE_API_KEY") or None
+
+
+def gemini_api_key() -> str | None:
+    """Gemini runtime key, read from process env only."""
+    return os.getenv("GEMINI_API_KEY") or None
+
+
+def anthropic_api_key() -> str | None:
+    """Anthropic runtime key, read from process env only."""
+    return os.getenv("ANTHROPIC_API_KEY") or None
+
+
 # --- Feature 011: realistic-levels / risk-aware-sizing knobs --------------
 # Placeholder defaults below are finalized empirically by the US4 comparison
 # artifact (specs/011-auto-refresh-risk-sizing/research.md Decision 6); the
