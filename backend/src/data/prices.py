@@ -76,7 +76,16 @@ class YFinancePriceProvider(PriceProvider):
         now = datetime.now(timezone.utc)
         records: list[dict] = []
         if len(tickers) == 1:
-            ticker_frames = [(tickers[0], df)]
+            single = df
+            if isinstance(df.columns, pd.MultiIndex):
+                # Current yfinance returns MultiIndex (ticker, field) columns even for a
+                # single-element list + group_by="ticker". Flatten to the field level so
+                # the row.get("Close") parse below sees "Close", not ("SPY", "Close") —
+                # otherwise every row is dropped as NaN and the fetch returns empty
+                # (this silently broke SPY/regime and any single-ticker fetch).
+                level0 = set(df.columns.get_level_values(0))
+                single = df[tickers[0]] if tickers[0] in level0 else df.droplevel(0, axis=1)
+            ticker_frames = [(tickers[0], single)]
         else:
             level0 = (
                 set(df.columns.get_level_values(0))
