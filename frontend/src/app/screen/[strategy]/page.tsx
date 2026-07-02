@@ -188,7 +188,7 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
   const effectiveExcludeEarnings = excludeEarningsOverride ?? configuredEarningsWindow > 0;
 
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 lg:px-8">
+    <main className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6 lg:px-8">
       <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -459,7 +459,7 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
             </div>
           ) : (
             <div className="overflow-x-auto border border-slate-200 bg-white">
-              <table className="data-table">
+              <table className="data-table data-table--wide">
                 <thead>
                   <tr>
                     <th className="px-4 py-3">Ticker</th>
