@@ -24,6 +24,16 @@ function percent(value: number | null | undefined) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function spyVerdict(value: boolean | null | undefined, reason?: string | null) {
+  if (value === true) {
+    return 'Above SMA 200';
+  }
+  if (value === false) {
+    return 'Below SMA 200';
+  }
+  return reason ?? 'Unavailable';
+}
+
 function favorabilityClass(value: string) {
   if (value === 'Favorable') {
     return STATUS_TONES.success;
@@ -80,7 +90,13 @@ export function RegimePanel() {
         <>
           <p className="text-sm text-slate-700">{regime.rule_summary}</p>
           <RegimeVisual regime={regime} />
-          <dl className="grid gap-3 text-sm sm:grid-cols-3">
+          {regime.inputs.unavailable_reason ? (
+            <div className={`${STATUS_TONES.warning} border p-3 text-sm`}>
+              {regime.inputs.unavailable_reason}
+            </div>
+          ) : null}
+
+          <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
             <div className="border border-slate-200 p-3">
               <dt className="text-xs uppercase text-slate-500">SPY close</dt>
               <dd className="mt-1 font-semibold text-slate-950">{inputNumber(regime.inputs.spy_close)}</dd>
@@ -88,6 +104,17 @@ export function RegimePanel() {
             <div className="border border-slate-200 p-3">
               <dt className="text-xs uppercase text-slate-500">SPY <Abbr term="SMA">SMA</Abbr> 200</dt>
               <dd className="mt-1 font-semibold text-slate-950">{inputNumber(regime.inputs.spy_sma200)}</dd>
+            </div>
+            <div className="border border-slate-200 p-3">
+              <dt className="text-xs uppercase text-slate-500">SPY verdict</dt>
+              <dd className="mt-1 font-semibold text-slate-950">
+                {spyVerdict(regime.inputs.spy_above_sma200, regime.inputs.unavailable_reason)}
+              </dd>
+            </div>
+            <div className="border border-slate-200 p-3">
+              <dt className="text-xs uppercase text-slate-500">SPY source</dt>
+              <dd className="mt-1 font-semibold text-slate-950">{regime.inputs.price_source_name}</dd>
+              <dd className="mt-1 text-xs text-slate-600">As of {regime.as_of_date}</dd>
             </div>
             <div className="border border-slate-200 p-3">
               <dt className="text-xs uppercase text-slate-500"><Abbr term="breadth">Breadth</Abbr> above <Abbr term="SMA">SMA</Abbr> 200</dt>

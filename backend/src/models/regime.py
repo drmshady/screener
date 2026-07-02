@@ -21,6 +21,7 @@ class RegimeInputs(BaseModel):
     breadth_eligible_count: int = 0
     breadth_total_constituents: int = 0
     price_source_name: str
+    unavailable_reason: str | None = None
     breadth_source_name: str
     breadth_source_as_of: str | None = None
 

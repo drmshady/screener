@@ -30,7 +30,10 @@ def _cached_regime() -> RegimeResponse | None:
         )
         if datetime.now(timezone.utc) - cached_at > timedelta(days=1):
             return None
-        return RegimeResponse.model_validate(payload["response"])
+        response = RegimeResponse.model_validate(payload["response"])
+        if response.inputs.spy_sma200 is None or response.inputs.spy_above_sma200 is None:
+            return None
+        return response
     except Exception:
         return None
 
@@ -71,5 +74,6 @@ def get_regime(as_of_date: str | None = Query(default=None)):
         for strategy in registry.list_all()
     ]
     if as_of_date is None:
-        _save_regime_cache(response)
+        if response.inputs.spy_sma200 is not None and response.inputs.spy_above_sma200 is not None:
+            _save_regime_cache(response)
     return response
