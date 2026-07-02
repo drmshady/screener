@@ -1,12 +1,41 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/013-portfolio-import-sizing/plan.md` (active feature 013), which builds on
-the 012 entry-timing-coverage, 011 auto-refresh-risk-sizing, 010 online-deployment,
-009 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005
-value strategy, 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
+`specs/014-ai-sentiment-narrative/plan.md` (active feature 014), which builds on
+the 013 portfolio-import-sizing, 012 entry-timing-coverage, 011 auto-refresh-risk-sizing,
+010 online-deployment, 009 release-readiness, 008 momentum data-integrity, 006
+side-by-side compare, 005 value strategy, 004 advisor export, 003 comparison, 002
+validation, and 001 MVP below.
 
-## Active feature: 013-portfolio-import-sizing
+## Active feature: 014-ai-sentiment-narrative
+
+Plan: `specs/014-ai-sentiment-narrative/plan.md`. Adds an **on-request,
+informational-only** AI sentiment & narrative report over stocks the owner selects
+(screener results, portfolio holdings, or a typed ticker), sourced from free/low-budget
+feeds (yfinance news baseline + owner-supplied **Finnhub / Alpha Vantage** backups + existing
+EDGAR/8-K events + free analyst opinion; social/retail omitted until a free, licensing-
+permissible source exists). Determinism + no-advice are preserved by computing the coarse
+**label/score** with a finance-domain classifier — **FinBERT (ONNX INT8, baked into the HF
+image, captured)**, with a transparent Loughran-McDonald **lexicon fallback**
+(`SCREENER_SENTIMENT_SCORER`) — and **capturing the optional LLM narrative once** into a
+fingerprint-keyed durable store served back byte-identically (never regenerated per view). The
+narrative prose model is **provider-swappable** (`SCREENER_SENTIMENT_LLM_PROVIDER`): free-tier
+**Gemini** default, **Claude Haiku 4.5** alternative, or `none`/template — behind a hard
+**~$5/month spend cap** enforced *before* every paid call, degrading to a deterministic,
+source-only template when reached, never exceeding budget. A rules-based **narrative-risk**
+overlay (0–100) uses neutral, non-directive labels. It never changes any gate
+result, rank, level, sizing, regime, or backtest baseline, carries zero directive language,
+and rides `data_as_of` + `disclaimer`; hosted mode stays owner-secret gated, directive-OFF,
+and never writes the read-only baked snapshot. Bundled are **three standalone bug fixes**:
+(A) add-to-watchlist parity + confirmation across the results table AND the candidate detail
+page; (B) the SPY 200-day-SMA regime input must show a concrete close/SMA/verdict + source +
+as-of (never a bare "Unknown") — root cause: a short/partial yfinance frame wins over the
+good daily-baked SPY series; (C) the Market-Events (FOMC/CPI/NFP/PCE/PPI) panel shows
+"Stale events data" and empties out because the curated econ-calendar YAML's static
+`source_as_of` never advances on the daily reseed and its finite events expire. No strategy
+rule, default, citation, indicator, or backtest baseline changes.
+
+## Prior feature: 013-portfolio-import-sizing
 
 Plan: `specs/013-portfolio-import-sizing/plan.md`. This active feature turns the
 portfolio into a record of what the owner actually bought: the browser reads the

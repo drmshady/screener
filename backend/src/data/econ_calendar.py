@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +21,8 @@ def _parse_dt(value: str | datetime) -> datetime:
         else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     )
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def load_econ_calendar(path: Path | str = DEFAULT_ECON_CALENDAR_PATH) -> dict[str, Any]:
@@ -40,8 +40,8 @@ def load_market_events_from_yaml(
     end: datetime | None = None,
 ) -> list[MarketEvent]:
     payload = load_econ_calendar(path)
-    start_dt = start.astimezone(timezone.utc) if start else datetime.now(timezone.utc)
-    end_dt = end.astimezone(timezone.utc) if end else start_dt + timedelta(days=7)
+    start_dt = start.astimezone(UTC) if start else datetime.now(UTC)
+    end_dt = end.astimezone(UTC) if end else start_dt + timedelta(days=7)
     events: list[MarketEvent] = []
     for row in payload.get("events", []):
         scheduled = _parse_dt(row["scheduled_at"])
@@ -65,6 +65,7 @@ def seed_econ_calendar(
     *,
     path: Path | str = DEFAULT_ECON_CALENDAR_PATH,
     db_path: Path | str = DEFAULT_DB_PATH,
+    refreshed_at: datetime | None = None,
 ) -> int:
     payload = load_econ_calendar(path)
     events = [
@@ -91,7 +92,10 @@ def seed_econ_calendar(
         display_name="US macro calendar",
         kind="market_events",
         refresh_interval_days=int(payload.get("refresh_interval_days") or 7),
-        last_refreshed_at=source_as_of,
+        last_refreshed_at=(refreshed_at or datetime.now(UTC))
+        .astimezone(UTC)
+        .isoformat()
+        .replace("+00:00", "Z"),
         db_path=db_path,
     )
     return len(events)

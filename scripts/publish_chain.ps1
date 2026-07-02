@@ -182,7 +182,11 @@ if ($SkipSecretScan) {
     if ($LASTEXITCODE -ne 0) { Die 'secret scan found potential secrets -- aborting before build.' }
 }
 
-# --- 5. Build the backend image ---------------------------------------------
+# --- 5. Export the local FinBERT ONNX artifact ------------------------------
+Step 'Export FinBERT ONNX model (idempotent)'
+RunPy @('scripts/export_finbert_onnx.py')
+
+# --- 6. Build the backend image ---------------------------------------------
 # Already gated on the snapshot having changed -- step 0's guard short-circuits
 # the whole chain (no build/push) when there is no new completed session.
 Step "Build image  $Image`:latest  (+ :$Tag)"
@@ -198,7 +202,7 @@ if ($env:GITHUB_ACTIONS -eq 'true') {
     Run 'docker' @('build', '-f', 'backend/Dockerfile', '-t', "$Image`:latest", '-t', "$Image`:$Tag", '.')
 }
 
-# --- 6. Push to GHCR ----------------------------------------------------------
+# --- 7. Push to GHCR ----------------------------------------------------------
 Step 'Push to GHCR'
 Run 'docker' @('push', "$Image`:latest")
 Run 'docker' @('push', "$Image`:$Tag")
@@ -206,7 +210,7 @@ $digest = $null
 try { $digest = (& docker inspect --format '{{index .RepoDigests 0}}' "$Image`:latest") } catch { $digest = $null }
 if ($digest) { Write-Host "Pushed digest: $digest" -ForegroundColor Green }
 
-# --- 7. Deploy: notify, or auto Factory-rebuild with -Deploy ----------------
+# --- 8. Deploy: notify, or auto Factory-rebuild with -Deploy ----------------
 if ($Deploy) {
     Step 'Deploy: Factory-rebuild the Hugging Face Space'
     $hfToken = $env:HF_TOKEN

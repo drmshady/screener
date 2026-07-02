@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from ..data.earnings_calendar import (
@@ -16,6 +16,7 @@ from ..data.events_store import (
     load_event_sources,
     load_market_events,
     load_ticker_events,
+    market_events_source_metadata,
     replace_ticker_events,
     upsert_event_source,
 )
@@ -44,9 +45,11 @@ class EventsService:
         self,
         *,
         db_path: Path | str = DEFAULT_DB_PATH,
+        econ_calendar_path: Path | str | None = None,
         earnings_providers: list[EarningsCalendarProvider] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
+        self.econ_calendar_path = econ_calendar_path
         self.earnings_providers = earnings_providers
 
     def store_ticker_events(
@@ -218,17 +221,32 @@ class EventsService:
         days_ahead: int = 7,
         as_of: datetime | None = None,
     ) -> MarketEventsResponse:
-        now = as_of or datetime.now(timezone.utc)
-        seed_econ_calendar(db_path=self.db_path)
+        now = as_of or datetime.now(UTC)
+        source = market_events_source_metadata(
+            ECON_CALENDAR_SOURCE,
+            now=now,
+            db_path=self.db_path,
+        )
+        if source is None:
+            seed_kwargs = {"db_path": self.db_path, "refreshed_at": now}
+            if self.econ_calendar_path is not None:
+                seed_kwargs["path"] = self.econ_calendar_path
+            seed_econ_calendar(**seed_kwargs)
+            source = market_events_source_metadata(
+                ECON_CALENDAR_SOURCE,
+                now=now,
+                db_path=self.db_path,
+            )
         end = now + timedelta(days=max(days_ahead, 0))
         events = load_market_events(now, end, db_path=self.db_path)
-        sources = load_event_sources([ECON_CALENDAR_SOURCE], db_path=self.db_path)
-        source = sources[0] if sources else None
         return MarketEventsResponse(
             events=events,
             source_name=ECON_CALENDAR_SOURCE,
-            source_as_of=source.source_as_of if source else utc_now_iso(),
-            is_stale=source.is_stale if source else True,
+            source_as_of=source["source_as_of"] if source else utc_now_iso(),
+            is_stale=bool(source["is_stale"]) if source else True,
+            schedule_extends_through=(
+                source["schedule_extends_through"] if source else None
+            ),
             data_as_of=utc_now_iso(),
             disclaimer=DISCLAIMER_TEXT,
         )

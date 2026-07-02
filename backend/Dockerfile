@@ -48,6 +48,7 @@ COPY backend/data/edgar_cache /app/backend/data/edgar_cache
 COPY backend/data/backtests /app/backend/data/backtests
 COPY backend/data/regime /app/backend/data/regime
 COPY backend/data/halal_terminal_cache /app/backend/data/halal_terminal_cache
+COPY backend/data/finbert_onnx /app/backend/data/finbert_onnx
 
 EXPOSE 8000
 

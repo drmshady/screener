@@ -20,6 +20,15 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function formatDateOnly(value: string) {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'America/New_York',
+  }).format(new Date(value));
+}
+
 export function MarketEventsPanel({ daysAhead = 7 }: { daysAhead?: number }) {
   const [data, setData] = useState<MarketEventsResponse | null>(null);
   const [failed, setFailed] = useState(false);
@@ -79,7 +88,13 @@ export function MarketEventsPanel({ daysAhead = 7 }: { daysAhead?: number }) {
               <span className="text-slate-600 sm:text-right">{formatDate(event.scheduled_at)} ET</span>
             </a>
           ))}
-          {data.events.length === 0 ? <div className="p-3 text-sm text-slate-500">No scheduled events in this window.</div> : null}
+          {data.events.length === 0 ? (
+            <div className="p-3 text-sm text-slate-500">
+              {data.schedule_extends_through
+                ? `Official schedule extends through ${formatDateOnly(data.schedule_extends_through)}.`
+                : 'No scheduled events in this window.'}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

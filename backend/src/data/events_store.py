@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..lib.disclaimer import utc_now_iso
 from ..models.events import EventSourceStatus, MarketEvent, TickerEvent
@@ -21,8 +22,8 @@ def parse_dt(value: str | datetime | None) -> datetime | None:
     else:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def ensure_events_tables(db_path: Path | str = DEFAULT_DB_PATH) -> None:
@@ -194,8 +195,8 @@ def load_market_events(
             ORDER BY scheduled_at ASC
             """,
             (
-                start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-                end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                end.astimezone(UTC).isoformat().replace("+00:00", "Z"),
             ),
         ).fetchall()
     return [MarketEvent(**dict(row)) for row in rows]
@@ -231,6 +232,54 @@ def upsert_event_source(
         conn.commit()
 
 
+def market_events_source_metadata(
+    source_name: str,
+    *,
+    now: datetime | None = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> dict[str, Any] | None:
+    ensure_events_tables(db_path)
+    with sqlite3.connect(Path(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        source = conn.execute(
+            """
+            SELECT source_id, refresh_interval_days, last_refreshed_at, is_stale
+            FROM events_sources
+            WHERE source_id = ?
+            """,
+            (source_name,),
+        ).fetchone()
+        calendar = conn.execute(
+            """
+            SELECT MAX(source_as_of) AS source_as_of, MAX(scheduled_at) AS schedule_extends_through
+            FROM market_events
+            WHERE source_name = ?
+            """,
+            (source_name,),
+        ).fetchone()
+    if source is None:
+        return None
+
+    current_time = now or datetime.now(UTC)
+    last_refreshed = parse_dt(source["last_refreshed_at"])
+    derived_stale = (
+        True
+        if last_refreshed is None
+        else current_time - last_refreshed
+        > timedelta(days=int(source["refresh_interval_days"]))
+    )
+    return {
+        "source_name": source["source_id"],
+        "source_as_of": (calendar["source_as_of"] if calendar else None)
+        or source["last_refreshed_at"],
+        "last_refreshed_at": source["last_refreshed_at"],
+        "is_stale": bool(source["is_stale"]) or derived_stale,
+        "schedule_extends_through": (
+            calendar["schedule_extends_through"] if calendar else None
+        ),
+    }
+
+
 def load_event_sources(
     source_ids: Iterable[str] | None = None,
     *,
@@ -255,7 +304,7 @@ def load_event_sources(
             params,
         ).fetchall()
     statuses: list[EventSourceStatus] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for row in rows:
         source_as_of = row["last_refreshed_at"]
         parsed = parse_dt(source_as_of)
