@@ -14,6 +14,7 @@ export default function Home() {
       </header>
       <DataFreshnessPanel />
       <RegimePanel />
+      <MarketEventsPanel daysAhead={60} />
       <div className="grid gap-4 sm:grid-cols-2">
         <Link
           className="panel p-5 hover:border-slate-400"
@@ -54,7 +55,6 @@ export default function Home() {
           <p className="mt-2 text-sm text-slate-600">Glossary, source freshness, methodology citations, and reading notes.</p>
         </Link>
       </div>
-      <MarketEventsPanel daysAhead={60} />
     </main>
   );
 }
