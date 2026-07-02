@@ -610,10 +610,20 @@ export default function PortfolioPage() {
         <section aria-label="Imported holdings ledger" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-gray-950">Imported Holdings</h2>
-            <CopyHoldingAdvisorPrompt
-              totalCapital={String(portfolio.total_capital || 1)}
-              strategySlug={settings.default_strategy_slug}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-800 disabled:opacity-50"
+                disabled={sentimentTickers.size === 0}
+                onClick={runHoldingsSentiment}
+                type="button"
+              >
+                Run sentiment report{sentimentTickers.size ? ` (${sentimentTickers.size})` : ''}
+              </button>
+              <CopyHoldingAdvisorPrompt
+                totalCapital={String(portfolio.total_capital || 1)}
+                strategySlug={settings.default_strategy_slug}
+              />
+            </div>
           </div>
           <p className="text-xs text-gray-500">
             Derived from {storeTransactions.length} imported transaction{storeTransactions.length !== 1 ? 's' : ''}.
@@ -656,6 +666,7 @@ export default function PortfolioPage() {
             <table className="min-w-full text-left text-sm">
               <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                 <tr>
+                  <th className="px-4 py-3">Report</th>
                   <th className="px-4 py-3">Ticker</th>
                   <th className="px-4 py-3 text-right">Net shares</th>
                   <th className="px-4 py-3 text-right">Avg cost</th>
@@ -675,6 +686,14 @@ export default function PortfolioPage() {
                   const detail = importedDetails[h.ticker];
                   return (
                     <tr className="border-t border-gray-200" key={h.ticker}>
+                      <td className="px-4 py-3">
+                        <input
+                          aria-label={`Select ${h.ticker} for sentiment report`}
+                          checked={sentimentTickers.has(h.ticker)}
+                          onChange={() => toggleSentimentTicker(h.ticker)}
+                          type="checkbox"
+                        />
+                      </td>
                       <td className="px-4 py-3 font-semibold text-gray-950">{h.ticker}</td>
                       <td className="px-4 py-3 text-right text-gray-700">
                         {h.net_quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}
@@ -738,6 +757,16 @@ export default function PortfolioPage() {
               </tbody>
             </table>
           </div>
+        </section>
+      ) : null}
+
+      {sentimentSelections ? (
+        <section aria-label="Holdings sentiment report" className="space-y-3">
+          <h2 className="text-lg font-semibold text-gray-950">Holdings Sentiment Report</h2>
+          <SentimentReport
+            initialSelections={sentimentSelections}
+            key={sentimentSelections.map((selection) => selection.ticker).join(',')}
+          />
         </section>
       ) : null}
 
@@ -863,15 +892,6 @@ export default function PortfolioPage() {
                 </tbody>
               </table>
             </div>
-            {sentimentSelections ? (
-              <section aria-label="Holdings sentiment report" className="space-y-3">
-                <h2 className="text-lg font-semibold text-gray-950">Holdings Sentiment Report</h2>
-                <SentimentReport
-                  initialSelections={sentimentSelections}
-                  key={sentimentSelections.map((selection) => selection.ticker).join(',')}
-                />
-              </section>
-            ) : null}
             </>
           )}
 
