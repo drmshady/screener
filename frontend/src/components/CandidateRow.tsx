@@ -175,7 +175,7 @@ export function CandidateRow({
       <td className="px-4 py-3 text-sm text-slate-700">{candidate.reason}</td>
       <td className="px-4 py-3 text-sm text-slate-700">
         {candidate.entry_timing ? (
-          <div className="min-w-56 space-y-2">
+          <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <span className="border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-900">
                 {entryStateLabel(candidate.entry_timing.state)}
