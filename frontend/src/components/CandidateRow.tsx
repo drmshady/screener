@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Candidate, postSizing } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
 import { useAppStore } from '@/lib/store';
+import { AddToWatchlist } from './AddToWatchlist';
 import { EventsBadge } from './EventsBadge';
 import { ShariahBadge } from './ShariahBadge';
 
@@ -38,7 +39,6 @@ export function CandidateRow({
   timeframe?: string;
   sectorTopFraction?: number;
 }) {
-  const saveCandidate = useAppStore((state) => state.saveCandidate);
   const addHolding = useAppStore((state) => state.addHolding);
   const portfolio = useAppStore((state) => state.portfolio);
   const settings = useAppStore((state) => state.settings);
@@ -222,26 +222,11 @@ export function CandidateRow({
         <EventsBadge candidate={candidate} />
       </td>
       <td className="space-y-2 px-4 py-3 text-right">
-        <button
-          type="button"
-          className="w-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100"
-          onClick={() =>
-            saveCandidate({
-              ticker: candidate.ticker,
-              name: candidate.name,
-              sector: candidate.sector,
-              strategy_slug: strategySlug,
-              levels_snapshot: {
-                entry: candidate.entry,
-                stop_loss: candidate.stop_loss,
-                take_profit: candidate.take_profit,
-              },
-            })
-          }
-          title="Watch this candidate until it becomes entry-ready"
-        >
-          Add to watchlist
-        </button>
+        <AddToWatchlist
+          candidate={candidate}
+          strategySlug={strategySlug}
+          buttonClassName="w-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-100"
+        />
         <button
           type="button"
           className="w-full border border-slate-950 bg-slate-950 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
