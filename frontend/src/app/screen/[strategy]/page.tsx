@@ -354,26 +354,6 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
         </section>
       ) : null}
 
-      {loadError ? (
-        <section className="border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-          <p className="font-medium">Backtest evidence is temporarily unavailable.</p>
-          <p className="mt-1">{loadError}</p>
-        </section>
-      ) : null}
-
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
-        <StrategyGatesPanel strategy={strategy} />
-        {backtest ? (
-          <WalkForwardMetricsPanel backtest={backtest} />
-        ) : (
-          <section className="panel p-4 text-sm text-slate-600">
-            Backtest metrics are unavailable. The rest of the screen remains usable.
-          </section>
-        )}
-      </div>
-
-      {backtest ? <EquityCurveCharts backtest={backtest} curve={equityCurve} /> : null}
-
       {runError ? (
         <section className="border border-red-200 bg-red-50 p-4 text-sm text-red-900" role="alert">
           <p className="font-medium">Screen run failed.</p>
@@ -491,6 +471,29 @@ export default function StrategyScreenPage({ params }: { params: Promise<{ strat
           )}
         </section>
       ) : null}
+
+      <section className="space-y-8 border-t border-slate-200 pt-8">
+        <h2 className="text-lg font-semibold text-slate-950">Strategy & backtest evidence</h2>
+        {loadError ? (
+          <section className="border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-medium">Backtest evidence is temporarily unavailable.</p>
+            <p className="mt-1">{loadError}</p>
+          </section>
+        ) : null}
+
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
+          <StrategyGatesPanel strategy={strategy} />
+          {backtest ? (
+            <WalkForwardMetricsPanel backtest={backtest} />
+          ) : (
+            <section className="panel p-4 text-sm text-slate-600">
+              Backtest metrics are unavailable. The rest of the screen remains usable.
+            </section>
+          )}
+        </div>
+
+        {backtest ? <EquityCurveCharts backtest={backtest} curve={equityCurve} /> : null}
+      </section>
     </main>
   );
 }
