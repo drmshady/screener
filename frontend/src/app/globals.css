@@ -129,6 +129,14 @@ select:focus-visible {
   text-align: left;
 }
 
+/* Many-column tables (e.g. the screener results) get a real min-width so their
+   `overflow-x-auto` wrapper scrolls horizontally on narrow/mobile screens
+   instead of squishing every column — which crushed the far-right Action
+   column (the watchlist button) so it was only legible in landscape. */
+.data-table--wide {
+  min-width: 72rem;
+}
+
 .data-table th {
   background: var(--surface-muted);
   color: var(--text-muted);
