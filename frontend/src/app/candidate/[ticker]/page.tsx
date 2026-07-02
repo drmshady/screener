@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react';
 import { Abbr } from '@/components/Abbr';
+import { AddToWatchlist } from '@/components/AddToWatchlist';
 import { AsOfBadge } from '@/components/AsOfBadge';
 import { CandidatePriceChart } from '@/components/ChartPanels';
 import { CopyAdvisorPrompt } from '@/components/CopyAdvisorPrompt';
@@ -287,8 +288,14 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                 </div>
               ) : null}
               <div className="mt-4">
+                <AddToWatchlist
+                  candidate={match}
+                  strategySlug={match.strategy_slug ?? 'midterm_52w_high_momentum'}
+                  className="inline-block"
+                  buttonClassName="border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800"
+                />
                 <button
-                  className="border border-slate-950 bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+                  className="ml-2 border border-slate-950 bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
                   disabled={sizingState?.loading}
                   onClick={() => sizeMatch(match)}
                   type="button"
