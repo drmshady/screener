@@ -122,7 +122,17 @@ def _score_finbert(texts: tuple[str, ...]) -> ScoreResult:
             [item.attention_mask + [0] * (max_len - len(item.attention_mask)) for item in encoded],
             dtype=np.int64,
         )
-        logits = session.run(None, {"input_ids": input_ids, "attention_mask": attention_mask})[0]
+        # Feed only the inputs THIS exported graph declares. FinBERT (a BERT model)
+        # exported via Optimum requires token_type_ids; omitting it made session.run
+        # raise "Required inputs (token_type_ids) are missing", which the except
+        # below swallowed into a permanent lexicon fallback. token_type_ids is all
+        # zeros for the single-sequence inputs we score.
+        declared = {spec.name for spec in session.get_inputs()}
+        feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+        if "token_type_ids" in declared:
+            feed["token_type_ids"] = np.zeros_like(input_ids)
+        feed = {name: array for name, array in feed.items() if name in declared}
+        logits = session.run(None, feed)[0]
         exp = np.exp(logits - logits.max(axis=1, keepdims=True))
         probs = exp / exp.sum(axis=1, keepdims=True)
         # ProsusAI/finbert convention: positive, negative, neutral.
