@@ -47,12 +47,14 @@ def test_refresh_spy_history_writes_readable_parquet(tmp_path) -> None:
     assert len(loaded) == 3
 
 
-def test_refresh_spy_history_does_not_clobber_on_empty_fetch(tmp_path) -> None:
+def test_refresh_spy_history_does_not_clobber_on_empty_fetch(tmp_path, monkeypatch) -> None:
     target = tmp_path / "spy_history.parquet"
     regime.refresh_spy_history(provider=_FakeProvider(_spy_frame([100.0, 101.0])), path=target)
     assert target.exists()
 
-    # An empty fetch must leave the prior good file intact and report 0 rows.
+    # An empty fetch from ALL sources (yfinance AND the offline Stooq fallback) must
+    # leave the prior good file intact and report 0 rows.
+    monkeypatch.setattr(regime, "_spy_from_stooq", lambda: None)
     rows = regime.refresh_spy_history(provider=_FakeProvider(None), path=target)
     assert rows == 0
     loaded = regime._spy_from_baked(target)
