@@ -48,5 +48,6 @@ class MarketEventsResponse(BaseModel):
     source_name: str
     source_as_of: str
     is_stale: bool
+    schedule_extends_through: str | None = None
     data_as_of: str
     disclaimer: str

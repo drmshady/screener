@@ -370,6 +370,7 @@ export const MarketEventsResponseSchema = z.object({
   source_name: z.string(),
   source_as_of: z.string(),
   is_stale: z.boolean(),
+  schedule_extends_through: z.string().nullable().optional(),
   data_as_of: z.string(),
   disclaimer: z.string(),
 });

@@ -123,16 +123,16 @@ dates or empties silently). Deterministic; no strategy/baseline change.
 
 ### Tests for Bug C
 
-- [ ] T026 [P] [BUGC] Test in `backend/tests/events/test_market_events_freshness.py`: `is_stale` derives from actual `last_refreshed_at` (reseeded today ⇒ not stale), curated window rolls forward with real dates, and determinism across two runs on one snapshot (must FAIL first).
+- [X] T026 [P] [BUGC] Test in `backend/tests/events/test_market_events_freshness.py`: `is_stale` derives from actual `last_refreshed_at` (reseeded today ⇒ not stale), curated window rolls forward with real dates, and determinism across two runs on one snapshot (must FAIL first).
 
 ### Implementation for Bug C
 
-- [ ] T027 [BUGC] Fix `backend/src/data/econ_calendar.py` reseed to stamp a real refresh timestamp on `EventSource.last_refreshed_at` and roll the curated window forward with officially-published dates only (Fed/BLS/BEA); label when the schedule ends.
-- [ ] T028 [BUGC] Update `backend/src/models/events.py` so `is_stale` is derived from `now - last_refreshed_at > refresh_interval_days`, with `source_as_of` (content date) surfaced separately.
-- [ ] T029 [BUGC] Surface the corrected freshness fields in `backend/src/api/events.py` (`GET /events/market` delta per contracts/bugfixes.md).
-- [ ] T030 [BUGC] Ensure `scripts/ingest_daily.py`'s `seed_econ_calendar` call stamps the actual reseed time so the daily refresh advances freshness without owner action.
-- [ ] T031 [BUGC] Update `frontend/src/components/MarketEventsPanel.tsx` to show the "Stale events data" badge only when truly stale, and a "schedule extends through <last real date>" note when the curated window ends.
-- [ ] T032 [P] [BUGC] Frontend test in `frontend/tests/e2e/market-events-panel.spec.ts` asserting no spurious badge after reseed and the schedule-ends note.
+- [X] T027 [BUGC] Fix `backend/src/data/econ_calendar.py` reseed to stamp a real refresh timestamp on `EventSource.last_refreshed_at` and roll the curated window forward with officially-published dates only (Fed/BLS/BEA); label when the schedule ends.
+- [X] T028 [BUGC] Update `backend/src/models/events.py` so `is_stale` is derived from `now - last_refreshed_at > refresh_interval_days`, with `source_as_of` (content date) surfaced separately.
+- [X] T029 [BUGC] Surface the corrected freshness fields in `backend/src/api/events.py` (`GET /events/market` delta per contracts/bugfixes.md).
+- [X] T030 [BUGC] Ensure `scripts/ingest_daily.py`'s `seed_econ_calendar` call stamps the actual reseed time so the daily refresh advances freshness without owner action.
+- [X] T031 [BUGC] Update `frontend/src/components/MarketEventsPanel.tsx` to show the "Stale events data" badge only when truly stale, and a "schedule extends through <last real date>" note when the curated window ends.
+- [X] T032 [P] [BUGC] Frontend test in `frontend/tests/e2e/market-events-panel.spec.ts` asserting no spurious badge after reseed and the schedule-ends note.
 
 **Checkpoint**: All three P1 bug fixes ship independently (MVP + trust fixes complete).
 
