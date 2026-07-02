@@ -74,9 +74,15 @@ def refresh_spy_history(
     """Fetch SPY EOD and persist it to the daily-baked regime parquet.
 
     Called by the daily refresh (scripts/ingest_daily.py), which runs in CI / locally
-    where yfinance is reachable, so the host never has to fetch SPY at request time.
-    Fail-soft: an empty/failed fetch leaves any existing file untouched (returns 0)
-    rather than clobbering a good series with nothing.
+    at build time (before the docker build), so the host never has to fetch SPY at
+    request time. yfinance is preferred for freshness, but it is unreliable (blocked /
+    rate-limited on some networks and frequently on the CI runner), so on an empty or
+    failed fetch we FALL BACK to the offline Stooq archive — which is present at build
+    time (only the runtime image excludes it via .dockerignore) and carries a full
+    multi-year SPY series. This guarantees a bakeable >= sma_length SPY series instead
+    of leaving the host with no offline SPY at all (the actual root cause of the regime
+    "SPY price data unavailable" bug). Fail-soft: only an empty result from BOTH sources
+    leaves any existing file untouched (returns 0) rather than clobbering it with nothing.
     """
     target = Path(path) if path is not None else _SPY_HISTORY_PARQUET
     end = date.today() + timedelta(days=1)
@@ -86,6 +92,10 @@ def refresh_spy_history(
         df = prov.fetch_ohlcv(["SPY"], start_date=start, end_date=end)
     except Exception:
         df = None
+    if df is None or df.empty or "as_of_date" not in df or "close" not in df:
+        # yfinance unavailable — fall back to the reliable offline Stooq archive so the
+        # baked parquet still ships a full SPY series (the host has no other SPY source).
+        df = _spy_from_stooq()
     if df is None or df.empty or "as_of_date" not in df or "close" not in df:
         return 0
     out = (
