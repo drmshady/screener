@@ -17,14 +17,15 @@ def main() -> int:
         print(f"FinBERT ONNX already present at {OUT_DIR}; skipping export.")
         return 0
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    # NOTE: the installed optimum ONNX exporter CLI has no --revision flag, so we
+    # export from the model's default branch (MODEL_REVISION == "main", which is
+    # the exporter default) and record the revision in export_metadata.json below.
     cmd = [
         sys.executable,
         "-m",
         "optimum.exporters.onnx",
         "--model",
         MODEL_ID,
-        "--revision",
-        MODEL_REVISION,
         "--task",
         "text-classification",
         str(OUT_DIR),
