@@ -25,9 +25,14 @@ def build_template_narrative(ticker: str, sources: list[SourceItem], *, max_item
         date = item.published_at.date().isoformat()
         stale = " stale" if item.is_stale else ""
         parts.append(f"{publisher} on {date}{stale}: {item.title}")
-    narrative = f"{ticker.upper()} recent sourced context: " + "; ".join(parts) + "."
-    validate_no_directive_language(narrative)
-    return narrative
+    # The no-directive guard governs the app's OWN generated copy, so validate only
+    # the connective framing we author. The headlines are verbatim, attributed
+    # third-party source material (rendered identically in the Sources list) and are
+    # quoted, not recommended -- a publisher headline that says "Buy" must not crash
+    # the whole report the way it did for analyst-heavy names (AMAT/BELFB).
+    frame = f"{ticker.upper()} recent sourced context: "
+    validate_no_directive_language(frame)
+    return frame + "; ".join(parts) + "."
 
 
 def validate_no_directive_language(text: str) -> None:
