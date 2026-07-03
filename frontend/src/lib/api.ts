@@ -561,6 +561,8 @@ export const SizingRequestSchema = z.object({
       per_sector_cap_pct: z.number(),
     })
     .optional(),
+  // Feature 016 (US2): optional cash-first hard limit (Decimal string).
+  available_cash: z.string().nullable().optional(),
 });
 
 export const SizingResponseSchema = z.object({
@@ -575,7 +577,8 @@ export const SizingResponseSchema = z.object({
   risk_per_share: z.string().nullable().optional(),
   conviction_signal: z.string().nullable().optional(),
   conviction_adjustment: z.string().nullable().optional(),
-  // "risk_target" | "conviction" | "position_cap" | "sector_cap" | "portfolio_heat" | "conservative_fallback"
+  // "risk_target" | "conviction" | "position_cap" | "sector_cap" | "portfolio_heat" |
+  // "conservative_fallback" | "available_cash" (Feature 016 US2)
   binding_constraint: z.string().nullable().optional(),
   conviction_used: z.boolean().optional().default(false),
   // Feature 015 (US4/US7): safe-fallback + portfolio-heat metadata (additive).
@@ -921,6 +924,8 @@ export type PortfolioHoldingsResponse = z.infer<typeof PortfolioHoldingsResponse
 export async function fetchHoldings(body: {
   total_capital: string;
   strategy_slug?: string;
+  // Feature 016 (US2): optional cash-first limit threaded into per-holding sizing.
+  available_cash?: string | null;
 }): Promise<PortfolioHoldingsResponse> {
   return fetchApi('/portfolio/holdings', PortfolioHoldingsResponseSchema, {
     method: 'POST',
@@ -1011,4 +1016,82 @@ export async function fetchEntryStatus(ticker: string, strategySlug: string): Pr
     data_as_of: response.data_as_of,
     disclaimer: response.disclaimer,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Feature 016 (US1): momentum cockpit pipeline board
+// ---------------------------------------------------------------------------
+// Schemas widen additively: `directive_label` is optional (present only in the
+// personal-use, non-hosted path), and the whole response 404s gracefully when
+// the board is disabled (the home page falls back to today's panels).
+
+export const FitFactsSchema = z.object({
+  entry_ready: z.boolean(),
+  meaningful_size_survives: z.boolean(),
+  heat_headroom_ok: z.boolean(),
+  sector_room_ok: z.boolean(),
+  not_overconcentrated: z.boolean(),
+  regime_allows_entries: z.boolean(),
+  reward_to_risk_ok: z.boolean(),
+  cash_sufficient: z.boolean(),
+});
+
+export const FitResultSchema = z.object({
+  score: z.number(),
+  fit_band: z.enum(['strong_fit', 'partial_fit', 'poor_fit', 'blocked']),
+  facts: FitFactsSchema,
+  failed_facts: z.array(z.string()).optional().default([]),
+  rationale: z.string(),
+  directive_label: z
+    .enum(['consider_entry', 'hold_off', 'size_down', 'pass'])
+    .nullable()
+    .optional(),
+});
+
+export const PipelineBoardItemSchema = z.object({
+  ticker: z.string(),
+  entry_timing_state: z.string().nullable().optional(),
+  sizing_preview: SizingResponseSchema.nullable().optional(),
+  fit: FitResultSchema.nullable().optional(),
+  sector: z.string().optional().default('Unclassified'),
+  skipped_reason: z.string().nullable().optional(),
+});
+
+export const PipelineBoardResponseSchema = z.object({
+  items: z.array(PipelineBoardItemSchema).optional().default([]),
+  regime: z.record(z.string(), z.unknown()).nullable().optional(),
+  regime_allows_new_entries: z.boolean().optional().default(false),
+  heat_ceiling_pct: z.number().optional().default(0),
+  heat_headroom_pct: z.number().optional().default(0),
+  available_cash: z.string().nullable().optional(),
+  personal_use_directive: z.boolean().optional().default(false),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export type FitFacts = z.infer<typeof FitFactsSchema>;
+export type FitResult = z.infer<typeof FitResultSchema>;
+export type PipelineBoardItem = z.infer<typeof PipelineBoardItemSchema>;
+export type PipelineBoardResponse = z.infer<typeof PipelineBoardResponseSchema>;
+
+export interface PipelineBoardRequest {
+  tickers: string[];
+  strategy_slug?: string;
+  total_capital: string;
+  available_cash?: string | null;
+  caps?: { per_position_cap_pct: number; per_sector_cap_pct: number };
+}
+
+/**
+ * Fetch the momentum fit board. Throws an {@link ApiError} with status 404 when
+ * the pipeline is disabled — callers should catch that and degrade gracefully
+ * to today's home panels (no build-time env flag).
+ */
+export async function fetchPipelineBoard(
+  body: PipelineBoardRequest,
+): Promise<PipelineBoardResponse> {
+  return fetchApi('/pipeline/board', PipelineBoardResponseSchema, {
+    method: 'POST',
+    body: JSON.stringify({ strategy_slug: 'midterm_52w_high_momentum', ...body }),
+  });
 }

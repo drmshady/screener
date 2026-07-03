@@ -24,7 +24,7 @@ import {
 import { portfolioSyncPayload } from '@/components/PortfolioSync';
 import { COPY } from '@/lib/copy';
 import { formatMoney } from '@/lib/format';
-import { Holding, Transaction, useAppStore } from '@/lib/store';
+import { Holding, Transaction, effectiveTotalCapital, useAppStore } from '@/lib/store';
 
 /** Per-ticker summary derived from imported transactions (frontend MVP aggregation). */
 interface ImportedHolding {
@@ -270,6 +270,7 @@ export default function PortfolioPage() {
   const portfolio = useAppStore((state) => state.portfolio);
   const settings = useAppStore((state) => state.settings);
   const setTotalCapital = useAppStore((state) => state.setTotalCapital);
+  const setAvailableCash = useAppStore((state) => state.setAvailableCash);
   const addHolding = useAppStore((state) => state.addHolding);
   const updateHolding = useAppStore((state) => state.updateHolding);
   const removeHolding = useAppStore((state) => state.removeHolding);
@@ -434,9 +435,18 @@ export default function PortfolioPage() {
     setImportedDetailsLoading(true);
     setImportedDetailsError(null);
     try {
+      // Feature 016 (US2): size against the cash-first effective capital and pass
+      // the optional available_cash hard limit so each recommended size respects
+      // the owner's cash. Absent cash ⇒ byte-identical to today.
+      const activePortfolio = useAppStore.getState().portfolio;
+      const capital = effectiveTotalCapital(activePortfolio);
       const response = await fetchHoldings({
-        total_capital: String(portfolio.total_capital || 1),
+        total_capital: String(capital || 1),
         strategy_slug: settings.default_strategy_slug,
+        available_cash:
+          activePortfolio.available_cash != null
+            ? String(activePortfolio.available_cash)
+            : undefined,
       });
       setImportedDetails(Object.fromEntries(response.holdings.map((holding) => [holding.ticker, holding])));
       setImportedAsOf(response.data_as_of);
@@ -446,7 +456,7 @@ export default function PortfolioPage() {
     } finally {
       setImportedDetailsLoading(false);
     }
-  }, [portfolio.total_capital, settings.default_strategy_slug]);
+  }, [portfolio.total_capital, portfolio.available_cash, holdingsKey, settings.default_strategy_slug]);
 
   useEffect(() => {
     // Defer out of the synchronous effect body (loadHoldings may setState
@@ -613,6 +623,16 @@ export default function PortfolioPage() {
     setShowStorageWarning(false);
   }
 
+  // Feature 016 (US2): cash-first capital model. When available cash is set,
+  // total capital derives as cash + current holdings market value (manual +
+  // imported, server-priced where available; graceful when quotes are missing).
+  const cashSet = portfolio.available_cash != null;
+  const holdingsMarketValueDisplay =
+    derived.totalInvested + (importedTotals ? Number(importedTotals.total_invested) : 0);
+  const derivedTotalCapital = cashSet
+    ? (portfolio.available_cash ?? 0) + holdingsMarketValueDisplay
+    : portfolio.total_capital;
+
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
       <header className="border-b border-gray-200 pb-5">
@@ -658,7 +678,7 @@ export default function PortfolioPage() {
                 Run sentiment report{sentimentTickers.size ? ` (${sentimentTickers.size})` : ''}
               </button>
               <CopyHoldingAdvisorPrompt
-                totalCapital={String(portfolio.total_capital || 1)}
+                totalCapital={String(derivedTotalCapital || 1)}
                 strategySlug={settings.default_strategy_slug}
               />
             </div>
@@ -789,7 +809,7 @@ export default function PortfolioPage() {
                         <div className="flex flex-col items-end gap-2">
                           {h.status === 'open' && detail?.priceable ? (
                             <CopyHoldingAdvisorPrompt
-                              totalCapital={String(portfolio.total_capital || 1)}
+                              totalCapital={String(derivedTotalCapital || 1)}
                               ticker={h.ticker}
                               strategySlug={settings.default_strategy_slug}
                             />
@@ -825,27 +845,54 @@ export default function PortfolioPage() {
 
       <section className="grid gap-4 md:grid-cols-4">
         <label className="border border-gray-200 p-4 text-sm text-gray-800">
-          <span className="font-medium">Total capital</span>
+          <span className="font-medium">Available cash</span>
           <input
-            aria-label="Total capital"
+            aria-label="Available cash"
             className="mt-2 w-full border border-gray-300 px-3 py-2"
             min={0}
-            onChange={(event) => setTotalCapital(Number(event.target.value))}
+            onChange={(event) =>
+              setAvailableCash(event.target.value === '' ? null : Number(event.target.value))
+            }
+            placeholder="Optional"
             type="number"
-            value={portfolio.total_capital}
+            value={portfolio.available_cash ?? ''}
           />
+          <span className="mt-1 block text-xs text-gray-500">
+            {cashSet
+              ? 'Suggested sizes are limited to this cash.'
+              : 'Leave blank to size against total capital.'}
+          </span>
         </label>
+        {cashSet ? (
+          <div className="border border-gray-200 p-4">
+            <div className="text-sm text-gray-500">Total capital (derived)</div>
+            <div className="text-2xl font-semibold text-gray-950">{money(derivedTotalCapital)}</div>
+            <div className="mt-1 text-xs text-gray-500">
+              cash {money(portfolio.available_cash ?? 0)} + holdings {money(holdingsMarketValueDisplay)}
+            </div>
+          </div>
+        ) : (
+          <label className="border border-gray-200 p-4 text-sm text-gray-800">
+            <span className="font-medium">Total capital</span>
+            <input
+              aria-label="Total capital"
+              className="mt-2 w-full border border-gray-300 px-3 py-2"
+              min={0}
+              onChange={(event) => setTotalCapital(Number(event.target.value))}
+              type="number"
+              value={portfolio.total_capital}
+            />
+          </label>
+        )}
         <div className="border border-gray-200 p-4">
           <div className="text-sm text-gray-500">Total value</div>
           <div className="text-2xl font-semibold text-gray-950">{money(derived.totalInvested)}</div>
         </div>
         <div className="border border-gray-200 p-4">
-          <div className="text-sm text-gray-500">Cash</div>
-          <div className="text-2xl font-semibold text-gray-950">{money(derived.cash)}</div>
-        </div>
-        <div className="border border-gray-200 p-4">
-          <div className="text-sm text-gray-500">User-marked count</div>
-          <div className="text-2xl font-semibold text-gray-950">{derived.marked}</div>
+          <div className="text-sm text-gray-500">{cashSet ? 'Holdings value' : 'Cash'}</div>
+          <div className="text-2xl font-semibold text-gray-950">
+            {money(cashSet ? holdingsMarketValueDisplay : derived.cash)}
+          </div>
         </div>
       </section>
 

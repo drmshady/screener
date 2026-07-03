@@ -232,6 +232,7 @@ def _assemble_holdings(
             total_capital=body.total_capital,
             caps=body.caps,
             sector_value=sector_values.get(holding.sector, Decimal("0")),
+            available_cash=body.available_cash,
         )
         holding.risk = risk
         if risk is not None:

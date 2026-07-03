@@ -160,6 +160,11 @@ class SizingRequest(BaseModel):
     fair_value_trust_flag: str | None = None
     volatility: float | None = None
     strategy_rank: int | None = None
+    # Feature 016 (US2): optional cash-first hard limit. When present, the
+    # suggested position is capped so `suggested_shares × entry ≤ available_cash`
+    # and `binding_constraint = "available_cash"` when cash is the tightest limit.
+    # Absent (None) ⇒ byte-identical to today (contracts/sizing-available-cash.md).
+    available_cash: Decimal | None = None
 
     @field_validator("candidate_ticker")
     @classmethod
@@ -190,7 +195,8 @@ class SizingResponse(BaseModel):
     risk_per_share: Decimal | None = None
     conviction_signal: str | None = None  # "fair_value" | "inverse_vol" | "strategy_rank" | "none"
     conviction_adjustment: str | None = None  # "none" | "boost" | "cap"
-    # "risk_target" | "conviction" | "position_cap" | "sector_cap" | "portfolio_heat" | "conservative_fallback"
+    # "risk_target" | "conviction" | "position_cap" | "sector_cap" | "portfolio_heat" |
+    # "conservative_fallback" | "available_cash" (Feature 016 US2)
     binding_constraint: str | None = None
     conviction_used: bool = False
     # Feature 015 (US4): safe-fallback + portfolio-heat metadata (data-model.md §4).
@@ -305,6 +311,9 @@ class PortfolioHoldingsRequest(BaseModel):
     total_capital: Decimal
     caps: PortfolioCaps = Field(default_factory=PortfolioCaps)
     strategy_slug: str = "midterm_52w_high_momentum"
+    # Feature 016 (US2): optional cash-first limit threaded into each holding's
+    # recommended size (size_position). Absent ⇒ byte-identical to today.
+    available_cash: Decimal | None = None
 
     @field_validator("total_capital")
     @classmethod

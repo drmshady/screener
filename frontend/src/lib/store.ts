@@ -17,11 +17,32 @@ export interface Portfolio {
   schema_version: 3;
   total_capital: number;
   holdings: Holding[];
+  /**
+   * Feature 016 (US2): cash-first capital model. When set, the effective total
+   * capital derives as `available_cash + Σ holding market value` (see
+   * `effectiveTotalCapital`). Seeded once from the retired `cash_balance_override`.
+   */
+  available_cash?: number;
+  /** @deprecated Feature 016 (US2): retired in favour of `available_cash`. */
   cash_balance_override?: number;
   created_at: string;
   updated_at: string;
   local_storage_notice_acknowledged: boolean;
 }
+
+/**
+ * Feature 016 (US3): frontend-owned pipeline lifecycle state, keyed by
+ * `${strategy}-${ticker}`. Backend never parses this — it round-trips through
+ * the opaque `PUT /portfolio/state` blob. Derived stages always outrank the
+ * manual ones recorded here.
+ */
+export interface PipelineEntry {
+  manual_stage?: 'staged' | 'exited';
+  acknowledged_ready_at?: string;
+  ready_since?: string;
+}
+
+export type PipelineState = Record<string, PipelineEntry>;
 
 export interface ShariahOverride {
   ticker: string;
@@ -92,10 +113,14 @@ interface StoredState {
   transactions: Transaction[];
   sheet_id: string | null;
   sheet_range: string | null;
+  /** Feature 016 (US3): frontend-owned pipeline lifecycle state (opaque to backend). */
+  pipeline: PipelineState;
 }
 
 interface AppState extends StoredState {
   setTotalCapital: (amount: number) => void;
+  /** Feature 016 (US2): set/clear the owner's available cash (cash-first capital). */
+  setAvailableCash: (amount: number | null) => void;
   addHolding: (holding: Omit<Holding, 'added_at' | 'updated_at'> & Partial<Pick<Holding, 'added_at' | 'updated_at'>>) => void;
   updateHolding: (ticker: string, patch: Partial<Holding>) => void;
   removeHolding: (ticker: string) => void;
@@ -160,6 +185,26 @@ function normalizeHolding(value: unknown): Holding | null {
     updated_at: updatedAt,
     note: typeof record.note === 'string' && record.note.trim() ? record.note.trim() : undefined,
   };
+}
+
+/**
+ * Feature 016 (US2): the effective total capital used for sizing/exposure.
+ * When the owner has set `available_cash`, total capital derives as cash plus the
+ * current market value of every holding; otherwise it falls back to the manually
+ * entered `total_capital` (byte-identical to pre-016 behaviour). Not stored.
+ */
+export function holdingsMarketValue(portfolio: Portfolio): number {
+  return portfolio.holdings.reduce(
+    (sum, holding) => sum + holding.shares * (holding.current_price || holding.avg_cost),
+    0,
+  );
+}
+
+export function effectiveTotalCapital(portfolio: Portfolio): number {
+  if (portfolio.available_cash == null) {
+    return portfolio.total_capital;
+  }
+  return portfolio.available_cash + holdingsMarketValue(portfolio);
 }
 
 function defaultPortfolio(): Portfolio {
@@ -234,13 +279,23 @@ function normalizePortfolio(value: unknown): Portfolio {
   const holdings = Array.isArray(record.holdings)
     ? record.holdings.map(normalizeHolding).filter((holding): holding is Holding => Boolean(holding))
     : [];
+  // Feature 016 (US2): seed available_cash once from the retired
+  // cash_balance_override, then drop the override so it is never rewritten.
+  const availableCashRaw =
+    record.available_cash !== undefined && record.available_cash !== null
+      ? record.available_cash
+      : record.cash_balance_override;
+  const availableCash =
+    availableCashRaw === undefined || availableCashRaw === null
+      ? undefined
+      : Math.max(0, numberValue(availableCashRaw));
   return {
     ...fallback,
     ...record,
     schema_version: 3,
     total_capital: numberValue(record.total_capital, fallback.total_capital),
-    cash_balance_override:
-      record.cash_balance_override === undefined ? undefined : numberValue(record.cash_balance_override),
+    available_cash: availableCash,
+    cash_balance_override: undefined,
     holdings,
     created_at: typeof record.created_at === 'string' ? record.created_at : fallback.created_at,
     updated_at: typeof record.updated_at === 'string' ? record.updated_at : fallback.updated_at,
@@ -258,6 +313,10 @@ function normalizeStoredState(value: unknown): StoredState {
     transactions: Array.isArray(stateRecord.transactions) ? (stateRecord.transactions as Transaction[]) : [],
     sheet_id: typeof stateRecord.sheet_id === 'string' ? stateRecord.sheet_id : null,
     sheet_range: typeof stateRecord.sheet_range === 'string' ? stateRecord.sheet_range : null,
+    pipeline:
+      stateRecord.pipeline && typeof stateRecord.pipeline === 'object'
+        ? (stateRecord.pipeline as PipelineState)
+        : {},
   };
 }
 
@@ -271,6 +330,7 @@ function exportSnapshot(state: StoredState) {
     transactions: state.transactions,
     sheet_id: state.sheet_id,
     sheet_range: state.sheet_range,
+    pipeline: state.pipeline,
   };
 }
 
@@ -283,11 +343,20 @@ export const useAppStore = create<AppState>()(
       transactions: [],
       sheet_id: null,
       sheet_range: null,
+      pipeline: {},
       setTotalCapital: (amount) =>
         set((state) => ({
           portfolio: {
             ...state.portfolio,
             total_capital: Math.max(0, amount),
+            updated_at: nowIso(),
+          },
+        })),
+      setAvailableCash: (amount) =>
+        set((state) => ({
+          portfolio: {
+            ...state.portfolio,
+            available_cash: amount == null ? undefined : Math.max(0, amount),
             updated_at: nowIso(),
           },
         })),
@@ -455,7 +524,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'screener-storage',
-      version: 6,
+      version: 7,
       migrate: (persisted, version) => {
         const state = normalizeStoredState(persisted) as AppState;
         if (version < 4) {
@@ -471,6 +540,9 @@ export const useAppStore = create<AppState>()(
         // by normalizeStoredState (defaults to [] / null when absent).
         // version < 6 (Phase 013, US4): watchlist last_entry_state/last_checked_at
         // are optional and preserved as-is by normalizeStoredState (absent = unset).
+        // version < 7 (Feature 016): normalizeStoredState now seeds
+        // portfolio.available_cash from the retired cash_balance_override and
+        // defaults the frontend-owned pipeline key to {} — both no-ops when absent.
         return state;
       },
     },

@@ -52,6 +52,7 @@ def compute_holding_risk(
     total_capital: Decimal,
     caps: PortfolioCaps,
     sector_value: Decimal | None = None,
+    available_cash: Decimal | None = None,
 ) -> HoldingRisk | None:
     """Attach actual-vs-sized risk facts for a priceable open holding.
 
@@ -75,6 +76,7 @@ def compute_holding_risk(
             holdings=[],
             caps=caps,
             stop_loss=current.stop_loss,
+            available_cash=available_cash,
         )
     )
     actual_value = _actual_value(

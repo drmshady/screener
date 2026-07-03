@@ -91,6 +91,45 @@ def _apply_heat(
     return final_shares, binding_constraint, heat_after_pct
 
 
+def _heat_after_pct(
+    request: SizingRequest, shares: int, per_share_risk: Decimal
+) -> float:
+    """Aggregate open-risk fraction after committing ``shares`` at ``per_share_risk``."""
+    if request.total_capital <= 0:
+        return 0.0
+    existing_risk = existing_open_risk(request.holdings)
+    proposed_risk = money(per_share_risk * Decimal(shares))
+    return float((existing_risk + proposed_risk) / request.total_capital)
+
+
+def _apply_available_cash(
+    request: SizingRequest,
+    final_shares: int,
+    per_share_risk: Decimal,
+    binding_constraint: str,
+    heat_after_pct: float,
+) -> tuple[int, str, float]:
+    """Cap the position at the owner's available cash (Feature 016, US2).
+
+    Absent ``available_cash`` is byte-identical to today. When present, reduce
+    ``final_shares`` so ``shares × entry ≤ available_cash`` and report
+    ``available_cash`` as the binding constraint — but only when cash is the
+    tightest limit (a tighter risk/position/sector/heat constraint stands)."""
+    if request.available_cash is None:
+        return final_shares, binding_constraint, heat_after_pct
+
+    max_shares_by_cash = (
+        _floor_shares(request.available_cash / request.entry)
+        if request.entry > 0
+        else 0
+    )
+    if max_shares_by_cash < final_shares:
+        final_shares = max_shares_by_cash
+        binding_constraint = "available_cash"
+        heat_after_pct = _heat_after_pct(request, final_shares, per_share_risk)
+    return final_shares, binding_constraint, heat_after_pct
+
+
 def _conservative_fallback(request: SizingRequest) -> SizingResponse:
     """No valid stop supplied. The pre-US4 branch fell open to a full cap-fill —
     sizing *largest* exactly when risk information was weakest. Instead, size a
@@ -166,6 +205,9 @@ def _conservative_fallback(request: SizingRequest) -> SizingResponse:
 
     final_shares, binding_constraint, heat_after_pct = _apply_heat(
         request, final_shares, synthetic_stop, binding_constraint
+    )
+    final_shares, binding_constraint, heat_after_pct = _apply_available_cash(
+        request, final_shares, synthetic_stop, binding_constraint, heat_after_pct
     )
 
     trade_value = money(request.entry * Decimal(final_shares))
@@ -311,6 +353,9 @@ def _risk_based_sizing(request: SizingRequest) -> SizingResponse:
 
     final_shares, binding_constraint, heat_after_pct = _apply_heat(
         request, final_shares, risk_per_share, binding_constraint
+    )
+    final_shares, binding_constraint, heat_after_pct = _apply_available_cash(
+        request, final_shares, risk_per_share, binding_constraint, heat_after_pct
     )
 
     trade_value = money(request.entry * Decimal(final_shares))
