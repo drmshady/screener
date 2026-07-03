@@ -153,12 +153,18 @@ def compute_candidate_result(
     ticker: str,
     strategy: str = "midterm_52w_high_momentum",
     as_of: str | None = None,
+    market_universe: pd.DataFrame | None = None,
 ) -> AnalyzeResponse:
     """Compute the single-ticker strategy result (gate results + levels).
 
     Shared by GET /analyze/{ticker} and GET /analyze/{ticker}/advisor-prompt so
     both surfaces use one computation path and report identical numbers. Raises
     HTTPException (404/400) on the same conditions as the analyze endpoint.
+
+    ``market_universe`` lets a batch caller (the pipeline board) build the
+    percentile-gate universe snapshot **once** and reuse it across every ticker
+    instead of rebuilding it per call. When None (the default) the universe is
+    built here exactly as before, so the single-call behavior is byte-identical.
     """
     registered = registry.get(strategy)
     if registered is None:
@@ -196,7 +202,7 @@ def compute_candidate_result(
     # (so sector-strength / gross-profitability / asset-growth actually run for a
     # single symbol instead of being skipped). Fall back to single-symbol context
     # if the universe snapshot is unavailable.
-    universe = _market_universe(symbol, as_of)
+    universe = market_universe if market_universe is not None else _market_universe(symbol, as_of)
     if not universe.empty:
         others = universe[universe["ticker"].astype(str).str.upper() != symbol]
         combined = pd.concat([others, snapshot], ignore_index=True)
