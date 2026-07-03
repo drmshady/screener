@@ -14,6 +14,9 @@ export function portfolioSyncPayload(s: StoreSnapshot) {
     transactions: s.transactions,
     sheet_id: s.sheet_id,
     sheet_range: s.sheet_range,
+    // Feature 016 (US3): frontend-owned pipeline lifecycle state. Opaque to the
+    // backend — it round-trips through the same PUT /portfolio/state blob.
+    pipeline: s.pipeline,
   };
 }
 
@@ -65,7 +68,8 @@ export function PortfolioSync() {
         state.settings === prev.settings &&
         state.transactions === prev.transactions &&
         state.sheet_id === prev.sheet_id &&
-        state.sheet_range === prev.sheet_range
+        state.sheet_range === prev.sheet_range &&
+        state.pipeline === prev.pipeline
       ) {
         return;
       }

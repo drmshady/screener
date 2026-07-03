@@ -1,13 +1,66 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/014-ai-sentiment-narrative/plan.md` (active feature 014), which builds on
-the 013 portfolio-import-sizing, 012 entry-timing-coverage, 011 auto-refresh-risk-sizing,
-010 online-deployment, 009 release-readiness, 008 momentum data-integrity, 006
-side-by-side compare, 005 value strategy, 004 advisor export, 003 comparison, 002
-validation, and 001 MVP below.
+`specs/016-momentum-cockpit/plan.md` (active feature 016), which builds on
+the 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
+012 entry-timing-coverage, 011 auto-refresh-risk-sizing, 010 online-deployment, 009
+release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005 value strategy,
+004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 014-ai-sentiment-narrative
+## Active feature: 016-momentum-cockpit
+
+Plan: `specs/016-momentum-cockpit/plan.md`. Adds the **connective layer**: a momentum-only
+candidate **lifecycle pipeline** (watch → ready → staged → owned → managing → exited) and a
+portfolio-/regime-aware **fit** view surfaced as a **cockpit that replaces the static home
+page** — pure synthesis of numbers the app already produces (**no** screening rule, gate,
+indicator, citation, or backtest baseline change). Six slices: (1) batch **`POST /pipeline/board`**
+(momentum-hardwired: 422 for other slugs) amortizing one universe snapshot + one
+`aggregate_exposure`, per-ticker fail-soft, feeding a pure `score_fit` (facts → `fit_band`;
+internal 0–100 for sort only; neutral rationale + optional gated `directive_label`); (2)
+**cash-first capital model** — owner enters `available_cash`, total capital derives = cash +
+holdings MV, and `size_position` gains an optional `available_cash` hard limit
+(`binding_constraint = "available_cash"`; absent ⇒ byte-identical, no flag); (3) readiness
+alerts ("newly ready", "ready for N days") + holdings-attention list + a cross-surface
+`PipelineStageBadge` (stage derived-first, frontend-owned state via existing `PUT
+/portfolio/state`); (4) **in-app buy/sell recording** (`POST /portfolio/transactions` +
+`DELETE /.../{id}`) reusing the 013 import validator + `_assemble_holdings`, retaining raw
+transactions, Sheet import kept secondary; (5) **portfolio win/loss** — new pure
+`portfolio/pnl.py` (FIFO realized + win rate) + unrealized mark-to-market, additive/optional ⇒
+byte-identical when no closed lots, informational only; (6) **momentum-only UI** — value +
+short-term removed from every in-app entry point while their code, registry entries, and tests
+stay green (reversible). All new behavior gated by `pipeline_enabled()` (default OFF → board
+404s, home degrades to today's panels; no build-time env flag); determinism, `data_as_of` +
+`disclaimer`, zero-directive neutral path, and hosted directive-OFF preserved end-to-end.
+Momentum primary; value/short-term tests still pass.
+
+## Prior feature: 015-momentum-risk-hardening
+
+Plan: `specs/015-momentum-risk-hardening/plan.md`. A **validation, risk-management, and
+honesty** pass over the primary strategy (`midterm_52w_high_momentum`) applying the
+honest-review findings — **no** screening/selection rule, gate threshold, citation, or
+indicator definition change. Seven in-place slices: (1) give the *committed* backtest the
+rigor `backtests/study.py` already proved — finer-than-annual rebalance cadence (removes the
+Jan-31-only conditioning), an explicit disclosed per-side cost model, and per-period trade
+counts + low-reliability flags in the walk-forward panel; (2) validate the exits actually
+shown via the runner's existing `modeled_exits` path and a reproducible fixed-horizon-vs-
+modeled comparison artifact, gating any baseline swap on a documented improvement; (3) a
+third **trailing** `LevelBlock` per open holding from the chandelier-exit series already in
+the pipeline (a winner's stop sits above cost); (4) replace sizing's fail-open-to-cap-fill
+with a **conservative fallback** and add an aggregate open-risk (**portfolio heat**) ceiling
+reported as a binding constraint; (5) an **opt-in** regime-aware risk-budget overlay
+(byte-identical when OFF; adopted only if the strengthened backtest shows a drawdown
+improvement); (6) **honest level rationale** — attribute the stop to the ATR risk cap when it
+binds, recalibrate or drop the non-binding volatility reward ceiling; (7) clearer risk
+presentation (risk distance + reward-to-risk, three holding levels with status, sizing
+binding-constraint + heat headroom, thin-sample year flags). All new behavior rides
+`lib/flags.py` env flags / strategy `PARAMETERS` defaulting to **today's** output; response
+fields are additive/optional; the strengthened backtest is regenerated **locally and baked
+into the image** (never in-host), shipped via the existing `scripts/publish_chain.ps1` /
+daily-refresh path — fully compatible with the 010 hosted-mode baked-snapshot + BFF-proxy
+deployment. Determinism, `data_as_of` + `disclaimer`, zero-directive language, and
+hosted directive-OFF preserved end-to-end. Momentum primary; value tests still pass.
+
+## Prior feature: 014-ai-sentiment-narrative
 
 Plan: `specs/014-ai-sentiment-narrative/plan.md`. Adds an **on-request,
 informational-only** AI sentiment & narrative report over stocks the owner selects

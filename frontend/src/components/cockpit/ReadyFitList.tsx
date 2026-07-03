@@ -29,6 +29,16 @@ const ENTRY_STATE_LABEL: Record<string, string> = {
   entry_undetermined: 'Timing undetermined',
 };
 
+// Optional personal-use directive framing. Rendered ONLY when the payload carries
+// `directive_label` (personal-use directive on AND not hosted); the default and
+// hosted paths omit the field entirely, so nothing directive ever shows there.
+const DIRECTIVE_LABEL: Record<string, string> = {
+  consider_entry: 'Consider entry',
+  size_down: 'Size down',
+  hold_off: 'Hold off',
+  pass: 'Pass',
+};
+
 function human(value: string | null | undefined): string {
   return value ? value.replace(/_/g, ' ') : '—';
 }
@@ -127,6 +137,14 @@ export function ReadyFitList({
                   >
                     {band.label}
                   </span>
+                  {item.fit?.directive_label ? (
+                    <span
+                      className="inline-flex border border-slate-300 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700"
+                      data-testid="fit-directive"
+                    >
+                      {DIRECTIVE_LABEL[item.fit.directive_label] ?? item.fit.directive_label}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 

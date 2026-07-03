@@ -222,6 +222,18 @@ class ImportRequest(BaseModel):
     sheet_range: str | None = None
 
 
+class TransactionsRequest(BaseModel):
+    """Body for POST /portfolio/transactions (manual in-app buy/sell entry).
+
+    `rows` are raw transaction rows in the same shape the import validator accepts
+    (ticker, action ∈ {buy, sell}, quantity, price, trade_date, optional fees/note).
+    The server validates + assigns the stable content-hash `id` and appends to the
+    retained transactions list (Feature 016 US4). No sheet metadata.
+    """
+
+    rows: list[dict[str, object]]
+
+
 class ImportResult(BaseModel):
     """Response from POST /portfolio/import."""
 
@@ -323,6 +335,38 @@ class PortfolioHoldingsRequest(BaseModel):
         return money(value)
 
 
+class RealizedTrade(BaseModel):
+    """One FIFO realized round-trip (a sell matched against an earlier buy lot).
+
+    Feature 016 (US4). Informational only — never feeds sizing/levels/board.
+    """
+
+    ticker: str
+    shares: Decimal
+    buy_date: date_type
+    sell_date: date_type
+    proceeds: Decimal
+    cost_basis: Decimal
+    fees: Decimal
+    realized_pnl: Decimal
+    outcome: Literal["win", "loss", "flat"]
+    holding_days: int
+
+
+class RealizedPnl(BaseModel):
+    """Portfolio-level realized P&L: the FIFO round-trip history plus aggregates.
+
+    All aggregates are None/0 when there are no closed lots ⇒ byte-identical to
+    today's buy-only portfolios (Feature 016 US4).
+    """
+
+    trades: list[RealizedTrade] = Field(default_factory=list)
+    realized_pnl: Decimal | None = None
+    closed_trade_count: int = 0
+    winning_trade_count: int = 0
+    win_rate: float | None = None
+
+
 class PortfolioTotals(BaseModel):
     total_invested: Decimal
     total_capital_at_risk: Decimal = Decimal("0.00")
@@ -331,11 +375,22 @@ class PortfolioTotals(BaseModel):
     # remaining headroom, populated by the holdings assembly path (FR-010/FR-019).
     heat_ceiling_pct: float = 0.0
     heat_headroom_pct: float = 0.0
+    # Feature 016 (US4): additive/optional win/loss + mark-to-market P&L.
+    # All None/0 when there are no closed lots ⇒ byte-identical to today.
+    realized_pnl: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
+    total_pnl: Decimal | None = None
+    win_rate: float | None = None
+    closed_trade_count: int = 0
+    winning_trade_count: int = 0
 
 
 class PortfolioHoldingsResponse(BaseModel):
     holdings: list[PortfolioHolding]
     totals: PortfolioTotals
+    # Feature 016 (US4): FIFO realized round-trip history (empty when no closed
+    # lots). Informational only; the table renders win/loss detail from it.
+    realized_trades: list[RealizedTrade] = Field(default_factory=list)
     data_as_of: str = Field(default_factory=utc_now_iso)
     disclaimer: str = DISCLAIMER_TEXT
 

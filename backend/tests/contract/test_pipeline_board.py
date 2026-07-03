@@ -159,6 +159,18 @@ def test_determinism(monkeypatch) -> None:
     assert first == second
 
 
+def test_directive_absent_when_flag_off(monkeypatch) -> None:
+    # Default path (personal-use flag unset): the optional directive field must
+    # be omitted entirely, not merely null — leakage-detectable (SC-006).
+    _enable(monkeypatch)
+    monkeypatch.delenv("SCREENER_PERSONAL_USE_DIRECTIVE", raising=False)
+    body = _post().json()
+    assert body["personal_use_directive"] is False
+    for item in body["items"]:
+        if item["fit"] is not None:
+            assert "directive_label" not in item["fit"]
+
+
 def test_directive_present_when_personal_use_on(monkeypatch) -> None:
     _enable(monkeypatch)
     monkeypatch.setenv("SCREENER_PERSONAL_USE_DIRECTIVE", "1")

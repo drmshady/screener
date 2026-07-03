@@ -4,8 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Candidate, postSizing } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
+import { derivePipelineStage, pipelineKey } from '@/lib/pipeline';
 import { useAppStore } from '@/lib/store';
 import { AddToWatchlist } from './AddToWatchlist';
+import { PipelineStageBadge } from './cockpit/PipelineStageBadge';
 import { EventsBadge } from './EventsBadge';
 import { ShariahBadge } from './ShariahBadge';
 
@@ -54,7 +56,25 @@ export function CandidateRow({
   const addHolding = useAppStore((state) => state.addHolding);
   const portfolio = useAppStore((state) => state.portfolio);
   const settings = useAppStore((state) => state.settings);
+  const watchlist = useAppStore((state) => state.watchlist);
+  const pipeline = useAppStore((state) => state.pipeline);
   const [adding, setAdding] = useState(false);
+  // Feature 016 (US3): the cross-surface pipeline-stage badge (FR-011). Here the
+  // store holds only lightweight `Holding` rows (no levels/risk), so a held
+  // ticker resolves to `owned` — the `managing` escalation is a cockpit-home
+  // concern where /portfolio/holdings levels are available.
+  const held = portfolio.holdings.some((holding) => holding.ticker === candidate.ticker);
+  const stage = derivePipelineStage({
+    manualStage: pipeline[pipelineKey(strategySlug, candidate.ticker)]?.manual_stage,
+    holding: held ? { status: 'open' } : null,
+    entryTimingState: candidate.entry_timing?.state ?? null,
+    onWatchlist: watchlist.some(
+      (entry) =>
+        entry.ticker === candidate.ticker &&
+        entry.strategy_slug === strategySlug &&
+        entry.state !== 'dismissed',
+    ),
+  });
   const rowTimeframe = timeframe || candidate.timeframe;
   const distance = stopDistance(candidate.entry, candidate.stop_loss);
   // Carry the screen's strategy + sector-gate toggle into the detail page so its
@@ -106,9 +126,12 @@ export function CandidateRow({
   return (
     <tr className="border-b border-slate-200 last:border-b-0 hover:bg-slate-50">
       <td className="px-4 py-3">
-        <Link className="font-semibold text-slate-950 underline-offset-2 hover:underline" href={detailHref}>
-          {candidate.ticker}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link className="font-semibold text-slate-950 underline-offset-2 hover:underline" href={detailHref}>
+            {candidate.ticker}
+          </Link>
+          <PipelineStageBadge stage={stage} />
+        </div>
         <div className="text-xs text-slate-500">{candidate.name}</div>
         {candidate.return_12_1 !== undefined && candidate.return_12_1 !== null ? (
           <div

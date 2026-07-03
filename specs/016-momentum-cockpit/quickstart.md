@@ -44,7 +44,8 @@ board 404s and the home page renders today's panels — that path must stay byte
    watchlist / holdings.
 6. **Momentum-only UI** (SC-009): confirm home + nav show **no** value/short-term/compare entry
    points, while `py -3.12 -m pytest backend/tests/strategies backend/tests/backtests` for
-   value/short-term stays green (reversibility invariant).
+   value/short-term stays green (reversibility invariant, locked by
+   `backend/tests/strategies/test_reversibility_registry.py`).
 7. **Directive gating** (US5 / SC-006): with `SCREENER_PERSONAL_USE_DIRECTIVE` off, no directive
    verbs anywhere (Playwright lint). Toggle on (non-hosted) → optional labels appear. Confirm
    hosted mode never shows them.
@@ -67,7 +68,9 @@ npx.cmd playwright test frontend/tests/e2e/cockpit.spec.ts   # heat gauge, order
 ## Determinism check
 
 Run the board twice against the same snapshot + same persisted portfolio; assert identical JSON
-(ties break on a stable key). Assert a flag-OFF run of the existing APIs is byte-identical to 015.
+(ties break on a stable key). Assert a flag-OFF run of the existing APIs is byte-identical to 015
+(regression-locked by `backend/tests/contract/test_pipeline_flag_off.py`: board 404s and a
+representative existing endpoint is byte-identical whether the flag is OFF or ON).
 
 ## Deploy notes (compatible with 010 hosted architecture)
 

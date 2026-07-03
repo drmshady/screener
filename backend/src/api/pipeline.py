@@ -50,7 +50,7 @@ def _sizing_holdings() -> list[SizingHolding]:
     ``_assemble_holdings`` the portfolio page uses) so the board's exposure and
     per-ticker sizing match the portfolio exactly (contract invariant 5)."""
     body = PortfolioHoldingsRequest(total_capital=Decimal("1"))
-    holdings, _totals, _as_of = portfolio._assemble_holdings(body)
+    holdings, _totals, _as_of, _realized_trades = portfolio._assemble_holdings(body)
     out: list[SizingHolding] = []
     for holding in holdings:
         if holding.status != "open":

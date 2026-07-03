@@ -13,13 +13,16 @@ import {
   PortfolioQuote,
   PortfolioHoldingWithLevels,
   PortfolioQuotesResponseSchema,
+  RealizedTrade,
   SentimentSelection,
   ShariahStatus,
   ShariahStatusSchema,
+  deleteTransaction,
   fetchApi,
   fetchHoldings,
   getPortfolioState,
   putPortfolioState,
+  recordTransactions,
 } from '@/lib/api';
 import { portfolioSyncPayload } from '@/components/PortfolioSync';
 import { COPY } from '@/lib/copy';
@@ -100,6 +103,19 @@ type HoldingForm = {
   avg_dollar_volume_20d: string;
   note: string;
 };
+
+type TransactionForm = {
+  ticker: string;
+  action: 'buy' | 'sell';
+  quantity: string;
+  price: string;
+  trade_date: string;
+  fees: string;
+};
+
+function blankTransactionForm(): TransactionForm {
+  return { ticker: '', action: 'buy', quantity: '', price: '', trade_date: '', fees: '' };
+}
 
 function blankForm(): HoldingForm {
   return {
@@ -286,23 +302,30 @@ export default function PortfolioPage() {
     [storeTransactions],
   );
 
+  // Re-fetch the server blob and sync the retained transactions into the store.
+  // Shared by Sheet import and in-app record/delete so all three converge on the
+  // same server-owned transactions list.
+  const syncFromServer = useCallback(async () => {
+    try {
+      const resp = await getPortfolioState();
+      if (resp.state) {
+        const raw = resp.state as Record<string, unknown>;
+        const txns = Array.isArray(raw.transactions) ? (raw.transactions as Transaction[]) : [];
+        const sheetId = typeof raw.sheet_id === 'string' ? raw.sheet_id : null;
+        const sheetRange = typeof raw.sheet_range === 'string' ? raw.sheet_range : null;
+        setTransactions(txns, sheetId, sheetRange);
+      }
+    } catch {
+      // Backend unreachable — the store keeps its current data.
+    }
+  }, [setTransactions]);
+
   // After a successful import, re-fetch the server blob to sync transactions into the store.
   const handleImported = useCallback(
     async (_result: ImportResult) => {
-      try {
-        const resp = await getPortfolioState();
-        if (resp.state) {
-          const raw = resp.state as Record<string, unknown>;
-          const txns = Array.isArray(raw.transactions) ? (raw.transactions as Transaction[]) : [];
-          const sheetId = typeof raw.sheet_id === 'string' ? raw.sheet_id : null;
-          const sheetRange = typeof raw.sheet_range === 'string' ? raw.sheet_range : null;
-          setTransactions(txns, sheetId, sheetRange);
-        }
-      } catch {
-        // Backend unreachable — the store already has the pre-import data
-      }
+      await syncFromServer();
     },
-    [setTransactions],
+    [syncFromServer],
   );
 
   const [statuses, setStatuses] = useState<Record<string, ShariahStatus>>({});
@@ -321,10 +344,23 @@ export default function PortfolioPage() {
     total_capital_at_risk_pct: number;
     heat_ceiling_pct?: number;
     heat_headroom_pct?: number;
+    realized_pnl?: string | null;
+    unrealized_pnl?: string | null;
+    total_pnl?: string | null;
+    win_rate?: number | null;
+    closed_trade_count?: number;
+    winning_trade_count?: number;
   } | null>(null);
+  const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
   const [importedDetailsLoading, setImportedDetailsLoading] = useState(false);
   const [importedDetailsError, setImportedDetailsError] = useState<string | null>(null);
   const [removingTicker, setRemovingTicker] = useState<string | null>(null);
+  // US4 (feature 016): in-app buy/sell recording (secondary path alongside import).
+  const [txnForm, setTxnForm] = useState<TransactionForm>(blankTransactionForm());
+  const [txnBusy, setTxnBusy] = useState(false);
+  const [txnError, setTxnError] = useState<string | null>(null);
+  const [txnRejected, setTxnRejected] = useState<string[]>([]);
+  const [removingTxnId, setRemovingTxnId] = useState<string | null>(null);
   // US4 (feature 014): owner selects holdings and runs the same on-request
   // sentiment report used on /sentiment, reusing the SentimentReport component.
   // Only selected holdings are ever sent (origin:"holding"); unselected ones are
@@ -430,6 +466,7 @@ export default function PortfolioPage() {
       setImportedDetails({});
       setImportedAsOf(null);
       setImportedTotals(null);
+      setRealizedTrades([]);
       return;
     }
     setImportedDetailsLoading(true);
@@ -451,6 +488,7 @@ export default function PortfolioPage() {
       setImportedDetails(Object.fromEntries(response.holdings.map((holding) => [holding.ticker, holding])));
       setImportedAsOf(response.data_as_of);
       setImportedTotals(response.totals);
+      setRealizedTrades(response.realized_trades ?? []);
     } catch {
       setImportedDetailsError('Imported holding levels are unavailable.');
     } finally {
@@ -492,6 +530,62 @@ export default function PortfolioPage() {
       }
     },
     [removeTransactionsForTicker, loadHoldings],
+  );
+
+  // Record one manual transaction. Reuses the same server validator + retained
+  // list as the Sheet import (parity, SC-010), then re-syncs and re-aggregates.
+  const handleRecordTransaction = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setTxnError(null);
+      setTxnRejected([]);
+      setTxnBusy(true);
+      try {
+        const row: Record<string, unknown> = {
+          ticker: txnForm.ticker.trim().toUpperCase(),
+          action: txnForm.action,
+          quantity: txnForm.quantity,
+          price: txnForm.price,
+          trade_date: txnForm.trade_date,
+          source_row: Math.floor(Date.now() / 1000),
+        };
+        if (txnForm.fees.trim()) row.fees = txnForm.fees;
+        const result = await recordTransactions([row]);
+        if (result.rejected.length > 0) {
+          setTxnRejected(result.rejected.map((r) => r.reason));
+        } else {
+          setTxnForm(blankTransactionForm());
+        }
+        await syncFromServer();
+        await loadHoldings();
+      } catch {
+        setTxnError('Could not record the transaction. Please try again.');
+      } finally {
+        setTxnBusy(false);
+      }
+    },
+    [txnForm, syncFromServer, loadHoldings],
+  );
+
+  // Delete one retained transaction by id (correct a mistake), then re-aggregate.
+  const handleDeleteTransaction = useCallback(
+    async (id: string) => {
+      if (typeof window !== 'undefined') {
+        const confirmed = window.confirm('Delete this transaction? Holdings and P&L will be recomputed.');
+        if (!confirmed) return;
+      }
+      setRemovingTxnId(id);
+      try {
+        await deleteTransaction(id);
+        await syncFromServer();
+        await loadHoldings();
+      } catch {
+        setTxnError('Could not delete the transaction. Please try again.');
+      } finally {
+        setRemovingTxnId(null);
+      }
+    },
+    [syncFromServer, loadHoldings],
   );
 
   const derived = useMemo(() => {
@@ -664,6 +758,161 @@ export default function PortfolioPage() {
       {/* ------------------------------------------------------------------ */}
       <ImportTransactions onImported={handleImported} />
 
+      {/* ------------------------------------------------------------------ */}
+      {/* Feature 016 (US4) — Record a buy/sell in-app (secondary to import)   */}
+      {/* ------------------------------------------------------------------ */}
+      <section
+        aria-label="Record a transaction"
+        className="space-y-3 border border-gray-200 p-5"
+        data-transaction-record
+      >
+        <div>
+          <h2 className="text-lg font-semibold text-gray-950">Record a Transaction</h2>
+          <p className="text-xs text-gray-500">
+            Enter a single buy or sell. Google Sheet import remains available above for bulk entry.
+          </p>
+        </div>
+        <form className="grid gap-3 sm:grid-cols-6" onSubmit={handleRecordTransaction}>
+          <label className="block text-sm text-gray-800 sm:col-span-1">
+            <span className="font-medium">Ticker</span>
+            <input
+              aria-label="Transaction ticker"
+              className="mt-1 w-full border border-gray-300 px-3 py-2 uppercase"
+              onChange={(e) => setTxnForm((f) => ({ ...f, ticker: e.target.value }))}
+              required
+              value={txnForm.ticker}
+            />
+          </label>
+          <label className="block text-sm text-gray-800 sm:col-span-1">
+            <span className="font-medium">Action</span>
+            <select
+              aria-label="Transaction action"
+              className="mt-1 w-full border border-gray-300 px-3 py-2"
+              onChange={(e) => setTxnForm((f) => ({ ...f, action: e.target.value as 'buy' | 'sell' }))}
+              value={txnForm.action}
+            >
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+            </select>
+          </label>
+          <label className="block text-sm text-gray-800 sm:col-span-1">
+            <span className="font-medium">Quantity</span>
+            <input
+              aria-label="Transaction quantity"
+              className="mt-1 w-full border border-gray-300 px-3 py-2"
+              min={0}
+              onChange={(e) => setTxnForm((f) => ({ ...f, quantity: e.target.value }))}
+              required
+              step={0.0001}
+              type="number"
+              value={txnForm.quantity}
+            />
+          </label>
+          <label className="block text-sm text-gray-800 sm:col-span-1">
+            <span className="font-medium">Price</span>
+            <input
+              aria-label="Transaction price"
+              className="mt-1 w-full border border-gray-300 px-3 py-2"
+              min={0}
+              onChange={(e) => setTxnForm((f) => ({ ...f, price: e.target.value }))}
+              required
+              step={0.01}
+              type="number"
+              value={txnForm.price}
+            />
+          </label>
+          <label className="block text-sm text-gray-800 sm:col-span-1">
+            <span className="font-medium">Trade date</span>
+            <input
+              aria-label="Transaction date"
+              className="mt-1 w-full border border-gray-300 px-3 py-2"
+              onChange={(e) => setTxnForm((f) => ({ ...f, trade_date: e.target.value }))}
+              required
+              type="date"
+              value={txnForm.trade_date}
+            />
+          </label>
+          <label className="block text-sm text-gray-800 sm:col-span-1">
+            <span className="font-medium">Fees</span>
+            <input
+              aria-label="Transaction fees"
+              className="mt-1 w-full border border-gray-300 px-3 py-2"
+              min={0}
+              onChange={(e) => setTxnForm((f) => ({ ...f, fees: e.target.value }))}
+              placeholder="Optional"
+              step={0.01}
+              type="number"
+              value={txnForm.fees}
+            />
+          </label>
+          <div className="sm:col-span-6">
+            <button
+              className="border border-gray-950 bg-gray-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              disabled={txnBusy}
+              type="submit"
+            >
+              {txnBusy ? 'Recording…' : 'Record transaction'}
+            </button>
+          </div>
+        </form>
+        {txnError ? (
+          <div className="border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">{txnError}</div>
+        ) : null}
+        {txnRejected.length > 0 ? (
+          <div className="border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+            Row rejected: {txnRejected.join('; ')}
+          </div>
+        ) : null}
+        {storeTransactions.length > 0 ? (
+          <div className="overflow-x-auto border border-gray-200">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Ticker</th>
+                  <th className="px-3 py-2">Action</th>
+                  <th className="px-3 py-2 text-right">Quantity</th>
+                  <th className="px-3 py-2 text-right">Price</th>
+                  <th className="px-3 py-2 text-right">Fees</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...storeTransactions]
+                  .sort(
+                    (a, b) =>
+                      a.trade_date.localeCompare(b.trade_date) || a.source_row - b.source_row,
+                  )
+                  .map((t) => (
+                    <tr className="border-t border-gray-200" key={t.id}>
+                      <td className="px-3 py-2 text-gray-700">{t.trade_date}</td>
+                      <td className="px-3 py-2 font-semibold text-gray-950">{t.ticker}</td>
+                      <td className="px-3 py-2 text-gray-700">{t.action === 'buy' ? 'Buy' : 'Sell'}</td>
+                      <td className="px-3 py-2 text-right text-gray-700">
+                        {Number(t.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-700">{formatMoney(t.price, t.ticker)}</td>
+                      <td className="px-3 py-2 text-right text-gray-700">
+                        {t.fees ? formatMoney(t.fees, t.ticker) : '-'}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          className="border border-gray-300 px-3 py-1 text-xs font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                          disabled={removingTxnId === t.id}
+                          onClick={() => handleDeleteTransaction(t.id)}
+                          type="button"
+                        >
+                          {removingTxnId === t.id ? 'Deleting…' : 'Delete'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
       {importedHoldings.length > 0 ? (
         <section aria-label="Imported holdings ledger" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -732,6 +981,116 @@ export default function PortfolioPage() {
                 ) : null}
               </div>
             </div>
+          ) : null}
+          {importedTotals &&
+          (importedTotals.realized_pnl != null ||
+            importedTotals.unrealized_pnl != null) ? (
+            <div aria-label="Portfolio profit and loss" className="grid gap-3 sm:grid-cols-4">
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Realized P/L</div>
+                <div
+                  className={
+                    importedTotals.realized_pnl != null && Number(importedTotals.realized_pnl) < 0
+                      ? 'text-lg font-semibold text-rose-700'
+                      : 'text-lg font-semibold text-emerald-700'
+                  }
+                >
+                  {importedTotals.realized_pnl != null ? formatMoney(importedTotals.realized_pnl) : '-'}
+                </div>
+                {importedTotals.closed_trade_count ? (
+                  <div className="mt-1 text-xs text-gray-500">
+                    {importedTotals.closed_trade_count} closed trade
+                    {importedTotals.closed_trade_count === 1 ? '' : 's'}
+                  </div>
+                ) : null}
+              </div>
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Unrealized P/L</div>
+                <div
+                  className={
+                    importedTotals.unrealized_pnl != null && Number(importedTotals.unrealized_pnl) < 0
+                      ? 'text-lg font-semibold text-rose-700'
+                      : 'text-lg font-semibold text-emerald-700'
+                  }
+                >
+                  {importedTotals.unrealized_pnl != null ? formatMoney(importedTotals.unrealized_pnl) : '-'}
+                </div>
+              </div>
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Total P/L</div>
+                <div
+                  className={
+                    importedTotals.total_pnl != null && Number(importedTotals.total_pnl) < 0
+                      ? 'text-lg font-semibold text-rose-700'
+                      : 'text-lg font-semibold text-emerald-700'
+                  }
+                >
+                  {importedTotals.total_pnl != null ? formatMoney(importedTotals.total_pnl) : '-'}
+                </div>
+              </div>
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Win rate</div>
+                <div className="text-lg font-semibold text-gray-950">
+                  {importedTotals.win_rate != null ? percent(importedTotals.win_rate) : '-'}
+                </div>
+                {importedTotals.win_rate != null ? (
+                  <div className="mt-1 text-xs text-gray-500">
+                    {importedTotals.winning_trade_count ?? 0} of {importedTotals.closed_trade_count ?? 0} closed
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {realizedTrades.length > 0 ? (
+            <details className="border border-gray-200" data-transaction-record>
+              <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-800">
+                Realized trades ({realizedTrades.length})
+              </summary>
+              <div className="overflow-x-auto border-t border-gray-200">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                    <tr>
+                      <th className="px-4 py-3">Ticker</th>
+                      <th className="px-4 py-3 text-right">Shares</th>
+                      <th className="px-4 py-3">Buy date</th>
+                      <th className="px-4 py-3">Sell date</th>
+                      <th className="px-4 py-3 text-right">Proceeds</th>
+                      <th className="px-4 py-3 text-right">Cost basis</th>
+                      <th className="px-4 py-3 text-right">Fees</th>
+                      <th className="px-4 py-3 text-right">Realized P/L</th>
+                      <th className="px-4 py-3">Outcome</th>
+                      <th className="px-4 py-3 text-right">Held (days)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {realizedTrades.map((t, i) => (
+                      <tr className="border-t border-gray-200" key={`${t.ticker}-${t.buy_date}-${t.sell_date}-${i}`}>
+                        <td className="px-4 py-3 font-semibold text-gray-950">{t.ticker}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">
+                          {Number(t.shares).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">{t.buy_date}</td>
+                        <td className="px-4 py-3 text-gray-700">{t.sell_date}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{formatMoney(t.proceeds, t.ticker)}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{formatMoney(t.cost_basis, t.ticker)}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{formatMoney(t.fees, t.ticker)}</td>
+                        <td
+                          className={
+                            Number(t.realized_pnl) < 0
+                              ? 'px-4 py-3 text-right text-rose-700'
+                              : 'px-4 py-3 text-right text-emerald-700'
+                          }
+                        >
+                          {formatMoney(t.realized_pnl, t.ticker)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 capitalize">{t.outcome}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{t.holding_days}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           ) : null}
           <div className="overflow-x-auto border border-gray-200">
             <table className="min-w-full text-left text-sm">

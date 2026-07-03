@@ -143,6 +143,12 @@ interface AppState extends StoredState {
   clearTransactions: () => void;
   /** Feature 013: drop all imported transactions for one ticker (portfolio removal). */
   removeTransactionsForTicker: (ticker: string) => void;
+  /**
+   * Feature 016 (US3): merge a patch into the frontend-owned pipeline entry for
+   * `${strategy}-${ticker}`. Pass `undefined` for a field to clear it; an entry
+   * that becomes empty is pruned. Backend never parses this blob.
+   */
+  updatePipelineEntry: (key: string, patch: Partial<PipelineEntry>) => void;
 }
 
 function nowIso() {
@@ -505,6 +511,22 @@ export const useAppStore = create<AppState>()(
           return {
             transactions: state.transactions.filter((t) => t.ticker.toUpperCase() !== symbol),
           };
+        }),
+      updatePipelineEntry: (key, patch) =>
+        set((state) => {
+          const merged: PipelineEntry = { ...(state.pipeline[key] ?? {}), ...patch };
+          (Object.keys(merged) as (keyof PipelineEntry)[]).forEach((field) => {
+            if (merged[field] === undefined) {
+              delete merged[field];
+            }
+          });
+          const pipeline = { ...state.pipeline };
+          if (Object.keys(merged).length === 0) {
+            delete pipeline[key];
+          } else {
+            pipeline[key] = merged;
+          }
+          return { pipeline };
         }),
       exportData: () => JSON.stringify(exportSnapshot(get()), null, 2),
       importData: (payload) => {

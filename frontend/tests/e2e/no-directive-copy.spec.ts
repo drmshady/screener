@@ -18,12 +18,17 @@ const FORBIDDEN_WORDS = [' Buy', ' Sell', 'Recommended', 'Strong buy'];
 
 // Feature 004 / FR-014: the advisor-prompt preview is the ONE place that may
 // carry directive framing, and only in personal-use mode where it is marked
-// with `data-personal-use-prompt`. Exclude exactly that element from the lint;
-// the rest of the page (all app chrome) must stay directive-free.
+// with `data-personal-use-prompt`. Exclude exactly that element from the lint.
+// Feature 016 (US4): the in-app transaction-record controls (`data-transaction-
+// record`) label the owner's OWN recorded buy/sell trades — factual bookkeeping,
+// not directive advice ("Buy"/"Sell" here describe what already happened). Exclude
+// those too; the rest of the page (all app chrome) must stay directive-free.
 async function assertNoDirectiveCopy(page: Page) {
   const bodyText = await page.evaluate(() => {
     const clone = document.body.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('[data-personal-use-prompt]').forEach((el) => el.remove());
+    clone
+      .querySelectorAll('[data-personal-use-prompt], [data-transaction-record]')
+      .forEach((el) => el.remove());
     return clone.innerText;
   });
   for (const word of FORBIDDEN_WORDS) {

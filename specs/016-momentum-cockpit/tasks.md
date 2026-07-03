@@ -110,15 +110,15 @@ and green (reversibility invariant, verified in Polish).
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T023 [P] [US3] Vitest unit test `frontend/tests/unit/` for the pure `derivePipelineStage` selector: assert precedence **holdings-derived (owned/managing) > exited > ready > staged > watching**, incl. the `ready`↔`owned` stale-board no-flicker case and `managing` escalation (level `status != "holding"` or `risk.over_risk`).
+- [X] T023 [P] [US3] Vitest unit test `frontend/tests/unit/` for the pure `derivePipelineStage` selector: assert precedence **holdings-derived (owned/managing) > exited > ready > staged > watching**, incl. the `ready`↔`owned` stale-board no-flicker case and `managing` escalation (level `status != "holding"` or `risk.over_risk`).
 
 ### Implementation for User Story 3
 
-- [ ] T024 [US3] Implement the pure `derivePipelineStage` selector in `frontend/src/lib/pipeline.ts` (precedence from [data-model.md](data-model.md); manual `staged`/`exited` only, derived stages always outrank). Makes T023 pass.
-- [ ] T025 [P] [US3] Create cockpit components `frontend/src/components/cockpit/PipelineStageBadge.tsx`, `WatchingList.tsx`, `AttentionList.tsx`, and `TransitionAlert.tsx` ("newly ready" + "ready for N days", clears on acknowledge; holdings-attention rows link into the portfolio).
-- [ ] T026 [US3] Render `PipelineStageBadge` wherever a ticker appears: [frontend/src/components/CandidateRow.tsx](../../frontend/src/components/CandidateRow.tsx) (screen results / watchlist / candidate detail reuse) — FR-011.
-- [ ] T027 [US3] Include the `pipeline` key (manual stage + ready acknowledgements) in the sync payload with a change-detection guard in [frontend/src/components/PortfolioSync.tsx](../../frontend/src/components/PortfolioSync.tsx) (backend stays opaque, via existing `PUT /portfolio/state`).
-- [ ] T028 [US3] Wire the alerts + attention sections into the cockpit home [frontend/src/app/page.tsx](../../frontend/src/app/page.tsx): `WatchingList`, `AttentionList`, `TransitionAlert`, with acknowledge-writes-back to the `pipeline` store; empty sections render as onboarding prompts (FR-014).
+- [X] T024 [US3] Implement the pure `derivePipelineStage` selector in `frontend/src/lib/pipeline.ts` (precedence from [data-model.md](data-model.md); manual `staged`/`exited` only, derived stages always outrank). Makes T023 pass.
+- [X] T025 [P] [US3] Create cockpit components `frontend/src/components/cockpit/PipelineStageBadge.tsx`, `WatchingList.tsx`, `AttentionList.tsx`, and `TransitionAlert.tsx` ("newly ready" + "ready for N days", clears on acknowledge; holdings-attention rows link into the portfolio).
+- [X] T026 [US3] Render `PipelineStageBadge` wherever a ticker appears: [frontend/src/components/CandidateRow.tsx](../../frontend/src/components/CandidateRow.tsx) (screen results / watchlist / candidate detail reuse) — FR-011.
+- [X] T027 [US3] Include the `pipeline` key (manual stage + ready acknowledgements) in the sync payload with a change-detection guard in [frontend/src/components/PortfolioSync.tsx](../../frontend/src/components/PortfolioSync.tsx) (backend stays opaque, via existing `PUT /portfolio/state`).
+- [X] T028 [US3] Wire the alerts + attention sections into the cockpit home [frontend/src/app/page.tsx](../../frontend/src/app/page.tsx): `WatchingList`, `AttentionList`, `TransitionAlert`, with acknowledge-writes-back to the `pipeline` store; empty sections render as onboarding prompts (FR-014).
 
 **Checkpoint**: US3 adds daily-driver alerts + stage visibility on top of the US1 cockpit.
 
@@ -132,17 +132,17 @@ and green (reversibility invariant, verified in Polish).
 
 ### Tests for User Story 4 (write FIRST, ensure they FAIL) ⚠️
 
-- [ ] T029 [P] [US4] Golden-fixture test `backend/tests/portfolio/test_pnl.py` per [contracts/portfolio-pnl.md](contracts/portfolio-pnl.md): (1) FIFO multi-lot + partial sell matches oldest lots, hand-computed `realized_pnl`/`outcome`/`win_rate`; (2) fees subtracted on matched shares; (3) win/loss/flat classification around break-even; (4) buy-only ⇒ `realized_pnl` None/0, **byte-identical** totals; (5) missing-quote unrealized degradation flagged, others unaffected; (6) informational isolation (no sizing/level/board change).
-- [ ] T030 [P] [US4] Contract test `backend/tests/contract/test_portfolio_transactions.py` per [contracts/portfolio-transactions.md](contracts/portfolio-transactions.md): (1) validation reuse (invalid manual row rejected like an invalid import row); (2) aggregation parity with import — SC-010; (3) retention of raw transactions across a state round-trip; (4) delete re-aggregates, unknown id → 404; (5) envelope; (6) `POST /portfolio/import` still works (regression).
+- [X] T029 [P] [US4] Golden-fixture test `backend/tests/portfolio/test_pnl.py` per [contracts/portfolio-pnl.md](contracts/portfolio-pnl.md): (1) FIFO multi-lot + partial sell matches oldest lots, hand-computed `realized_pnl`/`outcome`/`win_rate`; (2) fees subtracted on matched shares; (3) win/loss/flat classification around break-even; (4) buy-only ⇒ `realized_pnl` None/0, **byte-identical** totals; (5) missing-quote unrealized degradation flagged, others unaffected; (6) informational isolation (no sizing/level/board change).
+- [X] T030 [P] [US4] Contract test `backend/tests/contract/test_portfolio_transactions.py` per [contracts/portfolio-transactions.md](contracts/portfolio-transactions.md): (1) validation reuse (invalid manual row rejected like an invalid import row); (2) aggregation parity with import — SC-010; (3) retention of raw transactions across a state round-trip; (4) delete re-aggregates, unknown id → 404; (5) envelope; (6) `POST /portfolio/import` still works (regression).
 
 ### Implementation for User Story 4
 
-- [ ] T031 [P] [US4] Create pure `backend/src/portfolio/pnl.py`: `compute_realized_pnl(transactions) -> RealizedPnl` (FIFO per ticker → `RealizedTrade` round-trips with `proceeds − cost_basis − fees`, `outcome`, `holding_days`; aggregates + `win_rate`) and unrealized mark-to-market helper (graceful missing-quote degradation). Makes T029 pass.
-- [ ] T032 [US4] Extend [backend/src/models/portfolio.py](../../backend/src/models/portfolio.py): add `PortfolioTotals` optional `realized_pnl`/`unrealized_pnl`/`total_pnl`/`win_rate`/`closed_trade_count`/`winning_trade_count` (None/0 ⇒ byte-identical) and the new `RealizedTrade` model.
-- [ ] T033 [US4] Add `POST /portfolio/transactions` + `DELETE /portfolio/transactions/{id}` to [backend/src/api/portfolio.py](../../backend/src/api/portfolio.py) reusing the import validator + `_assemble_holdings`, retaining raw transactions in the owner blob, returning `ImportResult`-style summaries (404 on unknown delete id). Makes T030 pass.
-- [ ] T034 [US4] Surface P&L in the holdings/totals response in [backend/src/api/portfolio.py](../../backend/src/api/portfolio.py) by calling `compute_realized_pnl` + unrealized helper (informational only; never feeds sizing/levels/board).
-- [ ] T035 [P] [US4] Add transaction mutations (`recordTransactions`, `deleteTransaction`) + P&L Zod schemas to [frontend/src/lib/api.ts](../../frontend/src/lib/api.ts).
-- [ ] T036 [US4] Portfolio page [frontend/src/app/portfolio/page.tsx](../../frontend/src/app/portfolio/page.tsx): record-transaction form + editable transaction list (correct/delete), a P&L summary card (realized/unrealized/total + win rate, neutral labels), and a realized-trades table; keep the existing Sheet import as the secondary bulk path (FR-022).
+- [X] T031 [P] [US4] Create pure `backend/src/portfolio/pnl.py`: `compute_realized_pnl(transactions) -> RealizedPnl` (FIFO per ticker → `RealizedTrade` round-trips with `proceeds − cost_basis − fees`, `outcome`, `holding_days`; aggregates + `win_rate`) and unrealized mark-to-market helper (graceful missing-quote degradation). Makes T029 pass.
+- [X] T032 [US4] Extend [backend/src/models/portfolio.py](../../backend/src/models/portfolio.py): add `PortfolioTotals` optional `realized_pnl`/`unrealized_pnl`/`total_pnl`/`win_rate`/`closed_trade_count`/`winning_trade_count` (None/0 ⇒ byte-identical) and the new `RealizedTrade` model.
+- [X] T033 [US4] Add `POST /portfolio/transactions` + `DELETE /portfolio/transactions/{id}` to [backend/src/api/portfolio.py](../../backend/src/api/portfolio.py) reusing the import validator + `_assemble_holdings`, retaining raw transactions in the owner blob, returning `ImportResult`-style summaries (404 on unknown delete id). Makes T030 pass.
+- [X] T034 [US4] Surface P&L in the holdings/totals response in [backend/src/api/portfolio.py](../../backend/src/api/portfolio.py) by calling `compute_realized_pnl` + unrealized helper (informational only; never feeds sizing/levels/board).
+- [X] T035 [P] [US4] Add transaction mutations (`recordTransactions`, `deleteTransaction`) + P&L Zod schemas to [frontend/src/lib/api.ts](../../frontend/src/lib/api.ts).
+- [X] T036 [US4] Portfolio page [frontend/src/app/portfolio/page.tsx](../../frontend/src/app/portfolio/page.tsx): record-transaction form + editable transaction list (correct/delete), a P&L summary card (realized/unrealized/total + win rate, neutral labels), and a realized-trades table; keep the existing Sheet import as the secondary bulk path (FR-022).
 
 **Checkpoint**: US4 delivers in-app transaction entry + win/loss (SC-010, SC-011); byte-identical when no closed lots.
 
@@ -156,11 +156,11 @@ and green (reversibility invariant, verified in Polish).
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T037 [P] [US5] Test in `backend/tests/contract/test_pipeline_board.py` (or a focused `test_fit_directive.py`): `directive_label` present when `personal_use_directive()` on and not hosted; **absent** when the flag is off; **never present** under hosted mode regardless of the flag (leakage-detectable).
+- [X] T037 [P] [US5] Test in `backend/tests/contract/test_pipeline_board.py` (or a focused `test_fit_directive.py`): `directive_label` present when `personal_use_directive()` on and not hosted; **absent** when the flag is off; **never present** under hosted mode regardless of the flag (leakage-detectable).
 
 ### Implementation for User Story 5
 
-- [ ] T038 [US5] Render the optional `directive_label` alongside the neutral band in `frontend/src/components/cockpit/ReadyFitList.tsx` **only** when present in the payload (schema already optional from T011); no directive verbs in the neutral/hosted path.
+- [X] T038 [US5] Render the optional `directive_label` alongside the neutral band in `frontend/src/components/cockpit/ReadyFitList.tsx` **only** when present in the payload (schema already optional from T011); no directive verbs in the neutral/hosted path.
 
 **Checkpoint**: US5 personal-use framing works and is provably absent on the default/hosted path (SC-006).
 
@@ -170,10 +170,10 @@ and green (reversibility invariant, verified in Polish).
 
 **Purpose**: Reversibility invariant, byte-identical/off-path guarantees, and full-suite validation.
 
-- [ ] T039 [P] Reversibility regression test `backend/tests/strategies/` (or `backend/tests/validation/`) asserting the value + short-term strategy registry entries load and their existing suites remain green despite UI removal (SC-009, D10 invariant).
-- [ ] T040 [P] Flag-off byte-identical assertion: with `pipeline_enabled()` OFF, `POST /pipeline/board` 404s and existing endpoint outputs are unchanged (SC-005) — add to `backend/tests/contract/` or `backend/tests/api/`.
-- [ ] T041 [P] Update [specs/016-momentum-cockpit/quickstart.md](quickstart.md) manual-verification steps if any path drifted during implementation; confirm the deploy notes (baked snapshot + BFF proxy + owner-secret + flags) still hold.
-- [ ] T042 Run the full backend (pytest from repo root) + frontend (Vitest + Playwright) suites; confirm 0 silently-skipped financial-logic tests and green baseline before commit.
+- [X] T039 [P] Reversibility regression test `backend/tests/strategies/` (or `backend/tests/validation/`) asserting the value + short-term strategy registry entries load and their existing suites remain green despite UI removal (SC-009, D10 invariant). → `backend/tests/strategies/test_reversibility_registry.py`.
+- [X] T040 [P] Flag-off byte-identical assertion: with `pipeline_enabled()` OFF, `POST /pipeline/board` 404s and existing endpoint outputs are unchanged (SC-005) — add to `backend/tests/contract/` or `backend/tests/api/`. → `backend/tests/contract/test_pipeline_flag_off.py`.
+- [X] T041 [P] Update [specs/016-momentum-cockpit/quickstart.md](quickstart.md) manual-verification steps if any path drifted during implementation; confirm the deploy notes (baked snapshot + BFF proxy + owner-secret + flags) still hold.
+- [X] T042 Run the full backend (pytest from repo root) + frontend (Vitest + Playwright) suites; confirm 0 silently-skipped financial-logic tests and green baseline before commit. (Hardened the brittle `test_sector_relative_cap_changes_hard_output`; scoped the no-directive lint to exempt the factual in-app transaction-record buy/sell labels.)
 
 ---
 

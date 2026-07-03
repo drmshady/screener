@@ -31,11 +31,14 @@ from ..models.portfolio import (
     PortfolioQuote,
     PortfolioQuotesRequest,
     PortfolioQuotesResponse,
+    RealizedTrade,
+    TransactionsRequest,
     money,
 )
 from ..portfolio.aggregation import aggregate
 from ..portfolio.holding_levels import compute_holding_levels
 from ..portfolio.holding_risk import compute_holding_risk
+from ..portfolio.pnl import compute_realized_pnl, compute_unrealized_pnl
 from ..portfolio.transactions import parse_rows
 from ..regime.calculator import current_regime_response
 from ..screening.engine import build_single_ticker_snapshot
@@ -180,6 +183,61 @@ def portfolio_import(body: ImportRequest) -> ImportResult:
     )
 
 
+@router.post("/transactions", response_model=ImportResult)
+def portfolio_add_transactions(body: TransactionsRequest) -> ImportResult:
+    """Record one or more manual buy/sell transactions (Feature 016 US4).
+
+    Reuses the feature-013 import validator (`parse_rows`) and the retained
+    `transactions` list so manual entry and Sheet import converge on one holdings
+    model. Idempotent: rows whose stable content-hash id already exists are counted
+    as duplicates, not re-appended. Sheet metadata (if any) is preserved untouched.
+
+    Always returns 200 — partial success (some rows rejected) is still success.
+    422 only when the request body itself is malformed.
+    """
+    accepted_new, rejected = parse_rows(list(body.rows))
+
+    persisted, sheet_id, sheet_range = load_transactions()
+    existing_ids: set[str] = {t.id for t in persisted}
+
+    net_new = [t for t in accepted_new if t.id not in existing_ids]
+    duplicate_count = len(accepted_new) - len(net_new)
+
+    merged = persisted + net_new
+    save_transactions(merged, sheet_id, sheet_range)
+
+    return ImportResult(
+        accepted_count=len(net_new),
+        duplicate_count=duplicate_count,
+        rejected=rejected,
+        transactions_total=len(merged),
+        data_as_of=utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.delete("/transactions/{transaction_id}", response_model=ImportResult)
+def portfolio_delete_transaction(transaction_id: str) -> ImportResult:
+    """Remove one retained transaction by its stable content-hash id, then
+    re-aggregate (correct a mistake). 404 if the id is unknown (Feature 016 US4)."""
+    persisted, sheet_id, sheet_range = load_transactions()
+    remaining = [t for t in persisted if t.id != transaction_id]
+    if len(remaining) == len(persisted):
+        raise HTTPException(
+            status_code=404, detail=f"Transaction not found: {transaction_id}"
+        )
+
+    save_transactions(remaining, sheet_id, sheet_range)
+    return ImportResult(
+        accepted_count=0,
+        duplicate_count=0,
+        rejected=[],
+        transactions_total=len(remaining),
+        data_as_of=utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
 def _require_supported_strategy(slug: str) -> None:
     if slug != _SUPPORTED_HOLDINGS_STRATEGY:
         raise HTTPException(
@@ -190,7 +248,7 @@ def _require_supported_strategy(slug: str) -> None:
 
 def _assemble_holdings(
     body: PortfolioHoldingsRequest,
-) -> tuple[list[PortfolioHolding], PortfolioTotals, str | None]:
+) -> tuple[list[PortfolioHolding], PortfolioTotals, str | None, list[RealizedTrade]]:
     """Aggregate transactions into priced holdings + portfolio totals.
 
     Single source of truth shared by /holdings and the held-position advisor
@@ -244,14 +302,31 @@ def _assemble_holdings(
         else 0.0
     )
     heat_ceiling_pct = portfolio_heat_ceiling()
+
+    # Feature 016 (US4): additive, informational-only win/loss + mark-to-market.
+    # Realized figures stay None/0 with no closed lots ⇒ byte-identical to today.
+    realized = compute_realized_pnl(transactions)
+    unrealized_pnl, _unrealized_notes = compute_unrealized_pnl(holdings)
+    total_pnl: Decimal | None = None
+    if realized.realized_pnl is not None or unrealized_pnl is not None:
+        total_pnl = money(
+            (realized.realized_pnl or Decimal("0")) + (unrealized_pnl or Decimal("0"))
+        )
+
     totals = PortfolioTotals(
         total_invested=money(total_invested),
         total_capital_at_risk=money(total_capital_at_risk),
         total_capital_at_risk_pct=total_capital_at_risk_pct,
         heat_ceiling_pct=heat_ceiling_pct,
         heat_headroom_pct=heat_ceiling_pct - total_capital_at_risk_pct,
+        realized_pnl=realized.realized_pnl,
+        unrealized_pnl=unrealized_pnl,
+        total_pnl=total_pnl,
+        win_rate=realized.win_rate,
+        closed_trade_count=realized.closed_trade_count,
+        winning_trade_count=realized.winning_trade_count,
     )
-    return holdings, totals, newest_as_of
+    return holdings, totals, newest_as_of, realized.trades
 
 
 def _best_effort_regime() -> str | None:
@@ -265,10 +340,11 @@ def _best_effort_regime() -> str | None:
 @router.post("/holdings", response_model=PortfolioHoldingsResponse)
 def portfolio_holdings(body: PortfolioHoldingsRequest) -> PortfolioHoldingsResponse:
     _require_supported_strategy(body.strategy_slug)
-    holdings, totals, newest_as_of = _assemble_holdings(body)
+    holdings, totals, newest_as_of, realized_trades = _assemble_holdings(body)
     return PortfolioHoldingsResponse(
         holdings=holdings,
         totals=totals,
+        realized_trades=realized_trades,
         data_as_of=newest_as_of or utc_now_iso(),
         disclaimer=DISCLAIMER_TEXT,
     )
@@ -280,7 +356,7 @@ def portfolio_holdings_advisor_prompt(
 ) -> PortfolioAdvisorPromptResponse:
     """One copy-ready hold/trim/exit review prompt covering every open holding."""
     _require_supported_strategy(body.strategy_slug)
-    holdings, totals, newest_as_of = _assemble_holdings(body)
+    holdings, totals, newest_as_of, _realized_trades = _assemble_holdings(body)
     open_holdings = [h for h in holdings if h.status == "open"]
     strategy = registry.get(body.strategy_slug)
     directive = personal_use_directive()
@@ -310,7 +386,7 @@ def holding_advisor_prompt(
 ) -> HoldingAdvisorPromptResponse:
     """One copy-ready hold/trim/exit review prompt for a single held position."""
     _require_supported_strategy(body.strategy_slug)
-    holdings, _totals, _newest = _assemble_holdings(body)
+    holdings, _totals, _newest, _realized_trades = _assemble_holdings(body)
     symbol = ticker.strip().upper()
     match = next(
         (h for h in holdings if h.ticker == symbol and h.status == "open"), None

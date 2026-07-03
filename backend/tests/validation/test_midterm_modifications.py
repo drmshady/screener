@@ -50,11 +50,40 @@ def test_quality_screen_toggle_changes_hard_output(monkeypatch, frozen_snapshot)
 
 
 def test_sector_relative_cap_changes_hard_output(monkeypatch, frozen_snapshot) -> None:
+    """The per-sector cap (`max_per_sector`) demonstrably changes the hard-mode set.
+
+    The original form *relaxed* the cap to 99 and asserted the output flips, which
+    only holds when some sector already fills its 5-slot cap on the frozen snapshot
+    — pure data luck (it was inert on snapshots where every surviving sector holds
+    < 5 names, and the test then failed without any code regression). Instead,
+    derive a threshold that provably binds on THIS snapshot: tighten the cap to one
+    below the most-populated surviving sector's count, so at least that sector's
+    lowest-ranked name is guaranteed newly excluded and the set must change. Robust
+    to universe composition while still proving the sector cap is wired live.
+    """
     monkeypatch.setenv("SCREENER_GATE_MODE", "hard")
-    base = _tickers(midterm.rules(frozen_snapshot.us))
-    monkeypatch.setattr(midterm.PARAMETERS["max_per_sector"], "default", 99)
-    uncapped = _tickers(midterm.rules(frozen_snapshot.us))
-    assert set(uncapped) != set(base)
+    base = midterm.rules(frozen_snapshot.us)
+    base_tickers = _tickers(base)
+
+    if "sector" not in base.columns or not base_tickers:
+        pytest.skip(
+            "no classified survivors on this snapshot; the sector cap cannot bind "
+            "here (inert, not a regression)"
+        )
+    sector_counts = base["sector"].astype(str).value_counts()
+    max_in_a_sector = int(sector_counts.iloc[0]) if not sector_counts.empty else 0
+    if max_in_a_sector < 2:
+        pytest.skip(
+            "every surviving sector holds a single name on this snapshot; the "
+            "sector cap cannot bind here (inert, not a regression)"
+        )
+
+    # A cap one below the most-populated surviving sector's count must exclude that
+    # sector's lowest-ranked name, so the set differs regardless of cross-sector
+    # backfill.
+    monkeypatch.setattr(midterm.PARAMETERS["max_per_sector"], "default", max_in_a_sector - 1)
+    tightened = _tickers(midterm.rules(frozen_snapshot.us))
+    assert set(tightened) != set(base_tickers)
 
 
 def test_volatility_scaling_is_wired_into_live_screen_rows(frozen_snapshot) -> None:

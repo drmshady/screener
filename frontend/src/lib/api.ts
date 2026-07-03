@@ -834,6 +834,46 @@ export async function importTransactions(body: {
 }
 
 // ---------------------------------------------------------------------------
+// Feature 016 (US4): in-app buy/sell recording (POST/DELETE /portfolio/transactions)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /portfolio/transactions — record one or more manual transactions.
+ * Reuses the same row shape and ImportResult response as the Sheet import.
+ */
+export async function recordTransactions(
+  rows: Record<string, unknown>[],
+): Promise<ImportResult> {
+  return fetchApi('/portfolio/transactions', ImportResultSchema, {
+    method: 'POST',
+    body: JSON.stringify({ rows }),
+  });
+}
+
+/** DELETE /portfolio/transactions/{id} — remove one transaction and re-aggregate. */
+export async function deleteTransaction(id: string): Promise<ImportResult> {
+  return fetchApi(`/portfolio/transactions/${encodeURIComponent(id)}`, ImportResultSchema, {
+    method: 'DELETE',
+  });
+}
+
+// Feature 016 (US4): one FIFO realized round-trip (informational, neutral labels).
+export const RealizedTradeSchema = z.object({
+  ticker: z.string(),
+  shares: z.string(),
+  buy_date: z.string(),
+  sell_date: z.string(),
+  proceeds: z.string(),
+  cost_basis: z.string(),
+  fees: z.string(),
+  realized_pnl: z.string(),
+  outcome: z.enum(['win', 'loss', 'flat']),
+  holding_days: z.number(),
+});
+
+export type RealizedTrade = z.infer<typeof RealizedTradeSchema>;
+
+// ---------------------------------------------------------------------------
 // Feature 013: Portfolio holdings with purchase-anchored levels
 // ---------------------------------------------------------------------------
 
@@ -902,19 +942,32 @@ export const PortfolioHoldingSchema = z.object({
   risk: HoldingRiskSchema.nullable().optional(),
 });
 
+export const PortfolioTotalsSchema = z.object({
+  total_invested: z.string(),
+  total_capital_at_risk: z.string(),
+  total_capital_at_risk_pct: z.number(),
+  // Feature 015 (US4/US7): aggregate open-risk (portfolio heat) ceiling + headroom.
+  heat_ceiling_pct: z.number().optional().default(0),
+  heat_headroom_pct: z.number().optional().default(0),
+  // Feature 016 (US4): additive/optional win/loss + mark-to-market P&L.
+  realized_pnl: z.string().nullable().optional(),
+  unrealized_pnl: z.string().nullable().optional(),
+  total_pnl: z.string().nullable().optional(),
+  win_rate: z.number().nullable().optional(),
+  closed_trade_count: z.number().optional().default(0),
+  winning_trade_count: z.number().optional().default(0),
+});
+
 export const PortfolioHoldingsResponseSchema = z.object({
   holdings: z.array(PortfolioHoldingSchema),
-  totals: z.object({
-    total_invested: z.string(),
-    total_capital_at_risk: z.string(),
-    total_capital_at_risk_pct: z.number(),
-    // Feature 015 (US4/US7): aggregate open-risk (portfolio heat) ceiling + headroom.
-    heat_ceiling_pct: z.number().optional().default(0),
-    heat_headroom_pct: z.number().optional().default(0),
-  }),
+  totals: PortfolioTotalsSchema,
+  // Feature 016 (US4): FIFO realized round-trip history (empty when no closed lots).
+  realized_trades: z.array(RealizedTradeSchema).optional().default([]),
   data_as_of: z.string(),
   disclaimer: z.string(),
 });
+
+export type PortfolioTotals = z.infer<typeof PortfolioTotalsSchema>;
 
 export type LevelBlock = z.infer<typeof LevelBlockSchema>;
 export type HoldingRisk = z.infer<typeof HoldingRiskSchema>;
