@@ -136,10 +136,10 @@ def compute_holding_levels(holding: Holding) -> PortfolioHolding:
     basis for both original-plan and current-condition blocks.
     """
 
+    # The current snapshot drives price, current-condition levels, the trailing
+    # stop, and sizing. It is the only hard requirement: if it cannot be built
+    # the holding genuinely cannot be priced.
     try:
-        original_snapshot, original_as_of, original_notes = build_single_ticker_snapshot(
-            holding.ticker, as_of=holding.earliest_buy_date.isoformat()
-        )
         current_snapshot, current_as_of, current_notes = build_single_ticker_snapshot(
             holding.ticker
         )
@@ -151,7 +151,6 @@ def compute_holding_levels(holding: Holding) -> PortfolioHolding:
             levels=None,
         )
 
-    original_row = original_snapshot.iloc[0]
     current_row = current_snapshot.iloc[0]
     current_price = _decimal_from_row(current_row.get("close"))
     unrealized_pl = (
@@ -161,15 +160,38 @@ def compute_holding_levels(holding: Holding) -> PortfolioHolding:
     )
     unrealized_pl_pct = pct(current_price - holding.avg_cost, holding.avg_cost) if current_price is not None else None
 
-    original_levels = _levels_for_row(original_row, holding.avg_cost)
     current_levels = _levels_for_row(current_row, holding.avg_cost)
-    notes = list(original_notes) + list(current_notes)
-
-    original_block = _block(original_levels, current_price)
     current_block = _block(current_levels, current_price)
     trailing_block = _trailing_block(
         current_row, current_price, holding.avg_cost, current_block.stop_loss
     )
+    notes = list(current_notes)
+
+    # The original-plan block is anchored to the earliest buy date's snapshot —
+    # a historical reference, not required to price the holding. If that as-of
+    # snapshot cannot be rebuilt (e.g. after a cache-clearing refresh where the
+    # historical bar no longer resolves), degrade only this block instead of
+    # blanking the whole holding (which previously forced a re-import).
+    original_as_of = current_as_of
+    try:
+        original_snapshot, original_as_of, original_notes = build_single_ticker_snapshot(
+            holding.ticker, as_of=holding.earliest_buy_date.isoformat()
+        )
+        original_levels = _levels_for_row(original_snapshot.iloc[0], holding.avg_cost)
+        original_block = _block(original_levels, current_price)
+        notes += list(original_notes)
+    except ValueError as exc:
+        original_block = _block(
+            {
+                "levels_state": "insufficient_data",
+                "rationale": (
+                    "Original-plan levels unavailable: no priceable snapshot at the "
+                    f"purchase date ({holding.earliest_buy_date.isoformat()})."
+                ),
+            },
+            current_price,
+        )
+        notes.append(str(exc))
 
     return PortfolioHolding(
         **holding.model_dump(),

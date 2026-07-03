@@ -49,10 +49,52 @@ def test_holding_levels_forces_entry_to_average_cost(monkeypatch) -> None:
 
     result = holding_levels.compute_holding_levels(_holding("100.00"))
 
-    assert calls == ["2025-08-15", None]
+    # Current snapshot is built first (it is the hard requirement for pricing);
+    # the historical buy-date snapshot follows for the original-plan block.
+    assert calls == [None, "2025-08-15"]
     assert result.levels is not None
     assert result.levels.original_plan.entry == Decimal("100.00")
     assert result.levels.current_condition.entry == Decimal("100.00")
+
+
+def test_holding_stays_priceable_when_only_historical_snapshot_fails(monkeypatch) -> None:
+    """A failed buy-date (as-of) snapshot degrades only the original-plan block;
+    the holding is still priceable with current-condition levels and sizing."""
+
+    def fake_snapshot(ticker: str, as_of: str | None = None):
+        if as_of is None:
+            return _snapshot(125.0), "2026-06-30T21:00:00Z", []
+        raise ValueError(f"No OHLCV data available for {ticker}")
+
+    monkeypatch.setattr(holding_levels, "build_single_ticker_snapshot", fake_snapshot)
+
+    result = holding_levels.compute_holding_levels(_holding("100.00"))
+
+    assert result.priceable is True
+    assert result.current_price == Decimal("125.00")
+    assert result.levels is not None
+    # Current-condition levels still compute against average cost.
+    assert result.levels.current_condition.entry == Decimal("100.00")
+    assert result.levels.current_condition.levels_state == "ok"
+    assert result.levels.current_condition.stop_loss is not None
+    # Only the historical block degrades, with an explanatory note.
+    assert result.levels.original_plan.levels_state == "insufficient_data"
+    assert any("No OHLCV data available" in note for note in result.data_notes)
+
+
+def test_holding_not_priceable_when_current_snapshot_fails(monkeypatch) -> None:
+    """If the current snapshot cannot be built, the holding genuinely cannot be
+    priced and degrades to the insufficient-data holding (levels is None)."""
+
+    def fake_snapshot(ticker: str, as_of: str | None = None):
+        raise ValueError(f"No OHLCV data available for {ticker}")
+
+    monkeypatch.setattr(holding_levels, "build_single_ticker_snapshot", fake_snapshot)
+
+    result = holding_levels.compute_holding_levels(_holding("100.00"))
+
+    assert result.priceable is False
+    assert result.levels is None
 
 
 def test_holding_levels_reports_distance_and_status(monkeypatch) -> None:
