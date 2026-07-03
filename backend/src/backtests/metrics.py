@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from backend.src.lib import flags
 
 
 def _trade_stats(returns: list[float]) -> dict[str, float]:
@@ -24,10 +25,18 @@ def yearly_metric(year: int, returns: list[float]) -> dict:
     `max_drawdown` is the worst single-name loss that year (a per-rebalance risk
     proxy; true path drawdown is computed on the compounded yearly curve).
     """
+    trade_count = len(returns)
+    reliability = (
+        "low_sample"
+        if trade_count < flags.backtest_min_reliable_trades()
+        else "ok"
+    )
     if not returns:
         return {
             "year": year,
             "trades": 0,
+            "trade_count": 0,
+            "reliability": reliability,
             "hit_rate": 0.0,
             "avg_win": 0.0,
             "avg_loss": 0.0,
@@ -39,7 +48,9 @@ def yearly_metric(year: int, returns: list[float]) -> dict:
     worst = series.min()
     return {
         "year": year,
-        "trades": len(returns),
+        "trades": trade_count,
+        "trade_count": trade_count,
+        "reliability": reliability,
         "hit_rate": stats["hit_rate"],
         "avg_win": stats["avg_win"],
         "avg_loss": stats["avg_loss"],

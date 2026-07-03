@@ -18,6 +18,18 @@ function stopDistance(entry: string, stop: string) {
   return `${(((entryValue - stopValue) / entryValue) * 100).toFixed(1)}%`;
 }
 
+/** Reward-to-risk = (target − entry) / (entry − stop). Neutral, non-directive. */
+function rewardToRisk(entry: string, stop: string, target: string) {
+  const entryValue = Number(entry);
+  const stopValue = Number(stop);
+  const targetValue = Number(target);
+  if (![entryValue, stopValue, targetValue].every(Number.isFinite)) return null;
+  const risk = entryValue - stopValue;
+  const reward = targetValue - entryValue;
+  if (risk <= 0 || reward <= 0) return null;
+  return `${(reward / risk).toFixed(1)}x`;
+}
+
 function entryStateLabel(state: NonNullable<Candidate['entry_timing']>['state']) {
   if (state === 'entry_ready') return 'Entry-ready';
   if (state === 'not_entry_ready') return 'Not entry-ready';
@@ -163,6 +175,10 @@ export function CandidateRow({
       </td>
       <td className="px-4 py-3 text-right text-sm text-slate-700">
         {formatMoney(candidate.take_profit, candidate.ticker)}
+        {(() => {
+          const rr = rewardToRisk(candidate.entry, candidate.stop_loss, candidate.take_profit);
+          return rr ? <div className="text-xs text-slate-500">{rr} reward-to-risk</div> : null;
+        })()}
         {candidate.fair_value && candidate.fair_value_trust_flag === 'trusted' ? (
           <div className="mt-1 text-xs text-slate-600">
             fair value: {formatMoney(String(candidate.fair_value), candidate.ticker)}

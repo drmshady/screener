@@ -145,6 +145,7 @@ interface HoldingAlert {
 function levelStatusLabel(status: LevelBlock['status']) {
   if (status === 'stop_breached') return 'Stop breached';
   if (status === 'target_reached') return 'Target reached';
+  if (status === 'gains_protected') return 'Gains protected';
   if (status === 'insufficient_data') return 'Insufficient data';
   return 'Holding';
 }
@@ -163,13 +164,48 @@ function levelSummary(block?: LevelBlock | null, ticker?: string) {
         <span className="text-gray-500">Target </span>
         <span>{block.take_profit ? formatMoney(block.take_profit, ticker) : '-'}</span>
       </div>
-      <div className="text-xs text-gray-500">
+      <div
+        className={
+          block.status === 'gains_protected'
+            ? 'text-xs font-medium text-emerald-700'
+            : 'text-xs text-gray-500'
+        }
+      >
         {levelStatusLabel(block.status)}
         {block.distance_to_stop_pct !== null && block.distance_to_stop_pct !== undefined
           ? `, stop ${percent(block.distance_to_stop_pct)}`
           : ''}
         {block.distance_to_target_pct !== null && block.distance_to_target_pct !== undefined
           ? `, target ${percent(block.distance_to_target_pct)}`
+          : ''}
+      </div>
+    </div>
+  );
+}
+
+/** Trailing (chandelier) protective level. Neutral graceful-degradation copy when
+ * absent (price at/below cost or the chandelier value is missing — never a
+ * fabricated looser level). */
+function trailingSummary(block?: LevelBlock | null, ticker?: string) {
+  if (!block || block.levels_state === 'insufficient_data') {
+    return <span className="text-gray-500">No additional protection</span>;
+  }
+  return (
+    <div className="space-y-1">
+      <div>
+        <span className="text-gray-500">Stop </span>
+        <span>{block.stop_loss ? formatMoney(block.stop_loss, ticker) : '-'}</span>
+      </div>
+      <div
+        className={
+          block.status === 'gains_protected'
+            ? 'text-xs font-medium text-emerald-700'
+            : 'text-xs text-gray-500'
+        }
+      >
+        {levelStatusLabel(block.status)}
+        {block.distance_to_stop_pct !== null && block.distance_to_stop_pct !== undefined
+          ? `, stop ${percent(block.distance_to_stop_pct)}`
           : ''}
       </div>
     </div>
@@ -282,6 +318,8 @@ export default function PortfolioPage() {
     total_invested: string;
     total_capital_at_risk: string;
     total_capital_at_risk_pct: number;
+    heat_ceiling_pct?: number;
+    heat_headroom_pct?: number;
   } | null>(null);
   const [importedDetailsLoading, setImportedDetailsLoading] = useState(false);
   const [importedDetailsError, setImportedDetailsError] = useState<string | null>(null);
@@ -647,7 +685,7 @@ export default function PortfolioPage() {
             </div>
           ) : null}
           {importedTotals ? (
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-4">
               <div className="border border-gray-200 p-3">
                 <div className="text-xs uppercase text-gray-500">Total invested</div>
                 <div className="text-lg font-semibold text-gray-950">{formatMoney(importedTotals.total_invested)}</div>
@@ -659,6 +697,19 @@ export default function PortfolioPage() {
               <div className="border border-gray-200 p-3">
                 <div className="text-xs uppercase text-gray-500">Risk as % of capital</div>
                 <div className="text-lg font-semibold text-gray-950">{percent(importedTotals.total_capital_at_risk_pct)}</div>
+              </div>
+              <div className="border border-gray-200 p-3">
+                <div className="text-xs uppercase text-gray-500">Portfolio-heat headroom</div>
+                <div className="text-lg font-semibold text-gray-950">
+                  {importedTotals.heat_headroom_pct !== undefined
+                    ? percent(importedTotals.heat_headroom_pct)
+                    : '-'}
+                </div>
+                {importedTotals.heat_ceiling_pct !== undefined && importedTotals.heat_ceiling_pct > 0 ? (
+                  <div className="mt-1 text-xs text-gray-500">
+                    ceiling {percent(importedTotals.heat_ceiling_pct)}
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -676,6 +727,7 @@ export default function PortfolioPage() {
                   <th className="px-4 py-3 text-right">Unrealized P/L</th>
                   <th className="px-4 py-3">Original plan</th>
                   <th className="px-4 py-3">Current condition</th>
+                  <th className="px-4 py-3">Trailing</th>
                   <th className="px-4 py-3">Sizing & risk</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
@@ -720,6 +772,7 @@ export default function PortfolioPage() {
                       </td>
                       <td className="px-4 py-3 text-gray-700">{levelSummary(detail?.levels?.original_plan, h.ticker)}</td>
                       <td className="px-4 py-3 text-gray-700">{levelSummary(detail?.levels?.current_condition, h.ticker)}</td>
+                      <td className="px-4 py-3 text-gray-700">{trailingSummary(detail?.levels?.trailing, h.ticker)}</td>
                       <td className="px-4 py-3 text-gray-700">{riskSummary(detail, h.ticker)}</td>
                       <td className="px-4 py-3">
                         {detail && !detail.priceable ? (

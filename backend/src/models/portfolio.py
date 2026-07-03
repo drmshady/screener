@@ -190,8 +190,14 @@ class SizingResponse(BaseModel):
     risk_per_share: Decimal | None = None
     conviction_signal: str | None = None  # "fair_value" | "inverse_vol" | "strategy_rank" | "none"
     conviction_adjustment: str | None = None  # "none" | "boost" | "cap"
-    binding_constraint: str | None = None  # "risk_target" | "conviction" | "position_cap" | "sector_cap"
+    # "risk_target" | "conviction" | "position_cap" | "sector_cap" | "portfolio_heat" | "conservative_fallback"
+    binding_constraint: str | None = None
     conviction_used: bool = False
+    # Feature 015 (US4): safe-fallback + portfolio-heat metadata (data-model.md §4).
+    # Additive/backward-compatible; defaults keep a healthy request byte-identical.
+    conservative_fallback: bool = False
+    reward_to_risk: float | None = None
+    portfolio_heat_after_pct: float | None = None
     data_as_of: str = Field(default_factory=utc_now_iso)
     disclaimer: str = DISCLAIMER_TEXT
 
@@ -251,12 +257,22 @@ class LevelBlock(BaseModel):
     rationale: str
     distance_to_stop_pct: float | None = None
     distance_to_target_pct: float | None = None
-    status: Literal["holding", "stop_breached", "target_reached", "insufficient_data"]
+    status: Literal[
+        "holding",
+        "stop_breached",
+        "target_reached",
+        "gains_protected",
+        "insufficient_data",
+    ]
 
 
 class HoldingLevels(BaseModel):
     original_plan: LevelBlock
     current_condition: LevelBlock
+    # Feature 015 (US3): a third, current-price-anchored trailing block derived
+    # from the chandelier exit. None when price <= cost or the chandelier value is
+    # missing (graceful degradation, never a looser fabricated level — FR-008).
+    trailing: LevelBlock | None = None
 
 
 class HoldingRisk(BaseModel):
@@ -302,6 +318,10 @@ class PortfolioTotals(BaseModel):
     total_invested: Decimal
     total_capital_at_risk: Decimal = Decimal("0.00")
     total_capital_at_risk_pct: float = 0.0
+    # Feature 015 (US4/US7): aggregate open-risk (portfolio heat) ceiling and
+    # remaining headroom, populated by the holdings assembly path (FR-010/FR-019).
+    heat_ceiling_pct: float = 0.0
+    heat_headroom_pct: float = 0.0
 
 
 class PortfolioHoldingsResponse(BaseModel):

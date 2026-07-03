@@ -18,7 +18,7 @@ from ..data.portfolio_store import (
     save_transactions,
 )
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
-from ..lib.flags import personal_use_directive
+from ..lib.flags import personal_use_directive, portfolio_heat_ceiling
 from ..models.portfolio import (
     HoldingAdvisorPromptResponse,
     ImportRequest,
@@ -237,14 +237,18 @@ def _assemble_holdings(
         if risk is not None:
             total_capital_at_risk += risk.actual_capital_at_risk
 
+    total_capital_at_risk_pct = (
+        float(total_capital_at_risk / body.total_capital)
+        if body.total_capital > 0
+        else 0.0
+    )
+    heat_ceiling_pct = portfolio_heat_ceiling()
     totals = PortfolioTotals(
         total_invested=money(total_invested),
         total_capital_at_risk=money(total_capital_at_risk),
-        total_capital_at_risk_pct=(
-            float(total_capital_at_risk / body.total_capital)
-            if body.total_capital > 0
-            else 0.0
-        ),
+        total_capital_at_risk_pct=total_capital_at_risk_pct,
+        heat_ceiling_pct=heat_ceiling_pct,
+        heat_headroom_pct=heat_ceiling_pct - total_capital_at_risk_pct,
     )
     return holdings, totals, newest_as_of
 

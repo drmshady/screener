@@ -437,6 +437,12 @@ export const BacktestResponseSchema = z.object({
   data_sources: z.array(z.object({ source_name: z.string(), source_as_of: z.string() })),
   bias_check: z.array(z.object({ item: z.string(), passed: z.boolean(), note: z.string() })),
   coverage_notes: z.array(z.string()).optional(),
+  // Feature 015 (US1/US7): cadence + disclosed cost model surfaced read-only.
+  rebalance_cadence: z.string().nullable().optional(),
+  cost_model: z
+    .object({ per_side_bps: z.number(), applied: z.boolean() })
+    .nullable()
+    .optional(),
   yearly_metrics: z.array(
     z.object({
       year: z.number(),
@@ -446,6 +452,9 @@ export const BacktestResponseSchema = z.object({
       avg_loss: z.number(),
       total_return: z.number(),
       max_drawdown: z.number(),
+      // Feature 015 (US1/US7): per-year trade count + thin-sample reliability flag.
+      trade_count: z.number().nullable().optional(),
+      reliability: z.enum(['ok', 'low_sample']).nullable().optional(),
     }),
   ),
   summary_metrics: z.object({
@@ -566,8 +575,13 @@ export const SizingResponseSchema = z.object({
   risk_per_share: z.string().nullable().optional(),
   conviction_signal: z.string().nullable().optional(),
   conviction_adjustment: z.string().nullable().optional(),
+  // "risk_target" | "conviction" | "position_cap" | "sector_cap" | "portfolio_heat" | "conservative_fallback"
   binding_constraint: z.string().nullable().optional(),
   conviction_used: z.boolean().optional().default(false),
+  // Feature 015 (US4/US7): safe-fallback + portfolio-heat metadata (additive).
+  conservative_fallback: z.boolean().optional().default(false),
+  reward_to_risk: z.number().nullable().optional(),
+  portfolio_heat_after_pct: z.number().nullable().optional(),
   data_as_of: z.string(),
   disclaimer: z.string(),
 });
@@ -833,12 +847,22 @@ export const LevelBlockSchema = z.object({
   rationale: z.string(),
   distance_to_stop_pct: z.number().nullable().optional(),
   distance_to_target_pct: z.number().nullable().optional(),
-  status: z.enum(['holding', 'stop_breached', 'target_reached', 'insufficient_data']),
+  // Feature 015 (US3/US7): `gains_protected` — a trailing stop sitting above cost.
+  status: z.enum([
+    'holding',
+    'stop_breached',
+    'target_reached',
+    'gains_protected',
+    'insufficient_data',
+  ]),
 });
 
 export const HoldingLevelsSchema = z.object({
   original_plan: LevelBlockSchema,
   current_condition: LevelBlockSchema,
+  // Feature 015 (US3): a third, current-price-anchored trailing block from the
+  // chandelier exit. Null when price <= cost or the chandelier value is missing.
+  trailing: LevelBlockSchema.nullable().optional(),
 });
 
 export const HoldingRiskSchema = z.object({
@@ -881,6 +905,9 @@ export const PortfolioHoldingsResponseSchema = z.object({
     total_invested: z.string(),
     total_capital_at_risk: z.string(),
     total_capital_at_risk_pct: z.number(),
+    // Feature 015 (US4/US7): aggregate open-risk (portfolio heat) ceiling + headroom.
+    heat_ceiling_pct: z.number().optional().default(0),
+    heat_headroom_pct: z.number().optional().default(0),
   }),
   data_as_of: z.string(),
   disclaimer: z.string(),

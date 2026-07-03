@@ -1,0 +1,25 @@
+{
+  "computed_at": "2025-03-31T00:00:00Z",
+  "decision_note": "Fixed-horizon baseline retained because modeled exits did not improve total return without increasing max drawdown.",
+  "snapshot_id": "midterm_52w_high_momentum_stooq_2008-01-01_2024-12-31",
+  "strategy_slug": "midterm_52w_high_momentum",
+  "variants": {
+    "fixed_horizon": {
+      "avg_loss": 0.11776876344999491,
+      "avg_win": 0.1611322877916657,
+      "hit_rate": 0.5357142857142857,
+      "max_drawdown": 0.21944731361117387,
+      "total_return": 0.5876542378962184,
+      "trade_count": 252
+    },
+    "modeled_levels": {
+      "avg_loss": 0.10016864748774217,
+      "avg_win": 0.18356017465338034,
+      "hit_rate": 0.3531746031746032,
+      "max_drawdown": 0.2832815838413838,
+      "total_return": -0.04882375095057201,
+      "trade_count": 252
+    }
+  },
+  "verdict": "keep_fixed"
+}

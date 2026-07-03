@@ -5,7 +5,7 @@ import glob
 import json
 import sys
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
+from backend.src import (
+    strategies as _strategies,  # noqa: F401 - imports register strategy modules
+)
 from backend.src.backtests.bias_check import build_bias_check, to_markdown
 from backend.src.backtests.metrics import summarize_portfolio, yearly_metric
 from backend.src.data.fundamentals import FundamentalsLoader
@@ -24,9 +27,10 @@ from backend.src.data.stooq_history import StooqHistoricalProvider
 from backend.src.indicators.momentum import calculate_12_1_return
 from backend.src.indicators.price_action import calculate_chandelier_exit_long
 from backend.src.indicators.volatility import calculate_adr_ratio, calculate_atr
+from backend.src.lib import flags
 from backend.src.screening.engine import DEFAULT_SCREEN_TICKERS
+from backend.src.screening.regime import _spy_from_baked, _spy_from_stooq, market_regime
 from backend.src.strategies._registry import registry
-from backend.src import strategies as _strategies  # noqa: F401 - imports register strategy modules
 
 CONSOLIDATED_DIR = ROOT / "backend" / "data" / "prices" / "stooq_parquet"
 EDGAR_CACHE = ROOT / "backend" / "data" / "edgar_cache"
@@ -350,7 +354,11 @@ def _build_snapshot(
 
 
 def _forward_return(
-    by_ticker: pd.core.groupby.DataFrameGroupBy, ticker: str, as_of: date, horizon_days: int = HOLDING_HORIZON_DAYS
+    by_ticker: pd.core.groupby.DataFrameGroupBy,
+    ticker: str,
+    as_of: date,
+    horizon_days: int = HOLDING_HORIZON_DAYS,
+    cost_bps: float = 0.0,
 ) -> float | None:
     group = by_ticker.get_group(ticker)
     after = group[group["as_of_date"] > pd.Timestamp(as_of)]
@@ -361,7 +369,7 @@ def _forward_return(
     exit_price = float((exit_rows.iloc[0] if not exit_rows.empty else after.iloc[-1])["close"])
     if entry <= 0:
         return None
-    return (exit_price / entry) - 1
+    return (exit_price / entry) - 1 - ((2 * cost_bps) / 10_000)
 
 
 def _modeled_exit_return(
@@ -372,6 +380,7 @@ def _modeled_exit_return(
     stop_loss: float | None,
     take_profit: float | None,
     horizon_days: int = HOLDING_HORIZON_DAYS,
+    cost_bps: float = 0.0,
 ) -> float | None:
     """Level-driven modeled exit, opt-in for feature 011 US4.
 
@@ -381,14 +390,14 @@ def _modeled_exit_return(
     does. Inputs are already point-in-time levels from the candidate row.
     """
     if stop_loss is None or take_profit is None:
-        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days, cost_bps=cost_bps)
     try:
         stop = float(stop_loss)
         target = float(take_profit)
     except (TypeError, ValueError):
-        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days, cost_bps=cost_bps)
     if stop <= 0 or target <= stop:
-        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+        return _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days, cost_bps=cost_bps)
 
     group = by_ticker.get_group(ticker)
     after = group[group["as_of_date"] > pd.Timestamp(as_of)].copy()
@@ -423,7 +432,7 @@ def _modeled_exit_return(
             break
         exit_price = close
 
-    return (float(exit_price) / entry) - 1 if exit_price is not None else None
+    return (float(exit_price) / entry) - 1 - ((2 * cost_bps) / 10_000) if exit_price is not None else None
 
 
 # --------------------------------------------------------------------------- #
@@ -431,6 +440,193 @@ def _modeled_exit_return(
 # --------------------------------------------------------------------------- #
 def _annual_as_of_dates(start: date, end: date) -> list[date]:
     return [date(y, 1, 31) for y in range(start.year, end.year + 1) if start <= date(y, 1, 31) <= end]
+
+
+def _rebalance_as_of_dates(
+    trading_days: pd.DatetimeIndex, start: date, end: date, cadence: str
+) -> list[date]:
+    cadence = cadence.upper()
+    if cadence == "A":
+        return _annual_as_of_dates(start, end)
+    days = trading_days[(trading_days >= pd.Timestamp(start)) & (trading_days <= pd.Timestamp(end))]
+    frame = pd.DataFrame({"d": days})
+    month_ends = frame.groupby([frame["d"].dt.year, frame["d"].dt.month])["d"].max().tolist()
+    selected = month_ends if cadence == "M" else [d for d in month_ends if d.month in (1, 4, 7, 10)]
+    return [pd.Timestamp(d).date() for d in selected]
+
+
+def _load_backtest_spy() -> pd.DataFrame | None:
+    """Deterministic, offline SPY history for the regime-overlay backtest variant
+    (US5). Prefers the daily-baked parquet, then the local Stooq archive — never
+    the network — so the comparison is reproducible."""
+    return _spy_from_baked() if _spy_from_baked() is not None else _spy_from_stooq()
+
+
+def _backtest_regime_scale(as_of: date, spy_prices: pd.DataFrame | None) -> float:
+    """Regime-aware risk-budget scale for a rebalance date (US5, Decision 7).
+
+    Reduces the period's basket exposure to ``regime_risk_budget_unfavorable()``
+    when SPY is below its 200-day SMA (unfavorable regime, Faber 2007), else 1.0.
+    Fails open to 1.0 whenever the regime is unavailable — never blocks the run."""
+    try:
+        regime = market_regime(as_of_date=as_of.isoformat(), spy_prices=spy_prices)
+    except Exception:
+        return 1.0
+    if regime.get("regime") == "Trending down":
+        return flags.regime_risk_budget_unfavorable()
+    return 1.0
+
+
+def deterministic_result(result: dict) -> dict:
+    """Return the run payload without wall-clock-dependent mutation.
+
+    The helper is intentionally small: callers are responsible for deriving
+    fields like computed_at from snapshot data before passing the payload in.
+    Tests use this as the byte-serialization boundary.
+    """
+    return result
+
+
+def _comparison_variant(result: dict) -> dict[str, float | int]:
+    summary = result.get("summary_metrics", {})
+    return {
+        "total_return": float(summary.get("total_return", 0.0)),
+        "hit_rate": float(summary.get("hit_rate", 0.0)),
+        "avg_win": float(summary.get("avg_win", 0.0)),
+        "avg_loss": float(summary.get("avg_loss", 0.0)),
+        "max_drawdown": float(summary.get("max_drawdown", 0.0)),
+        "trade_count": int(summary.get("turnover", 0) or 0),
+    }
+
+
+def build_exit_comparison_artifact(
+    strategy_slug: str,
+    fixed_horizon: dict,
+    modeled_levels: dict,
+    *,
+    regime_overlay: dict | None = None,
+    snapshot_id: str | None = None,
+    computed_at: str | None = None,
+) -> dict[str, Any]:
+    """Build the reproducible fixed-horizon vs modeled-exit decision record.
+
+    When ``regime_overlay`` (US5) is supplied, the artifact instead records the
+    gated adoption decision for the opt-in regime-aware risk budget: the overlay
+    is adopted **only** if it documents a drawdown improvement versus the
+    unchanged (fixed-horizon) baseline (FR-006, "test, don't trust"). Absent an
+    overlay, the record is the US2 fixed-vs-modeled decision as before.
+    """
+    variants = {
+        "fixed_horizon": _comparison_variant(fixed_horizon),
+        "modeled_levels": _comparison_variant(modeled_levels),
+    }
+    fixed = variants["fixed_horizon"]
+    modeled = variants["modeled_levels"]
+
+    if regime_overlay is not None:
+        overlay = _comparison_variant(regime_overlay)
+        variants["regime_overlay"] = overlay
+        # US5 adoption is gated on a documented drawdown improvement against the
+        # unchanged (overlay-OFF) baseline, without giving up total return.
+        overlay_improves = (
+            overlay["max_drawdown"] < fixed["max_drawdown"]
+            and overlay["total_return"] >= fixed["total_return"]
+        )
+        if overlay_improves:
+            verdict = "adopt_regime_overlay"
+            decision_note = (
+                "Regime-aware risk budget lowers max drawdown without reducing total "
+                "return versus the overlay-OFF baseline; overlay may be defaulted ON."
+            )
+        else:
+            verdict = "keep_baseline"
+            decision_note = (
+                "Overlay-OFF baseline retained because the regime-aware risk budget did "
+                "not document a drawdown improvement without sacrificing total return."
+            )
+    else:
+        modeled_improves = (
+            modeled["total_return"] > fixed["total_return"]
+            and modeled["max_drawdown"] <= fixed["max_drawdown"]
+        )
+        if modeled_improves:
+            verdict = "adopt_modeled"
+            decision_note = (
+                "Modeled exits improve total return without increasing max drawdown; "
+                "baseline may be rebaked with the documented modeled-level result."
+            )
+        else:
+            verdict = "keep_fixed"
+            decision_note = (
+                "Fixed-horizon baseline retained because modeled exits did not improve "
+                "total return without increasing max drawdown."
+            )
+
+    fallback_id = str(
+        fixed_horizon.get("id") or modeled_levels.get("id") or strategy_slug
+    )
+    fallback_computed = str(
+        fixed_horizon.get("computed_at") or modeled_levels.get("computed_at")
+    )
+    return {
+        "strategy_slug": strategy_slug,
+        "snapshot_id": snapshot_id or fallback_id,
+        "computed_at": computed_at or fallback_computed,
+        "variants": variants,
+        "verdict": verdict,
+        "decision_note": decision_note,
+    }
+
+
+def comparison_summary_markdown(artifact: dict[str, Any]) -> str:
+    variants = artifact["variants"]
+    rows = []
+    for name in ("fixed_horizon", "modeled_levels", "regime_overlay"):
+        if name not in variants:
+            continue
+        metrics = variants[name]
+        rows.append(
+            "| {name} | {total:.2%} | {hit:.2%} | {win:.2%} | {loss:.2%} | {dd:.2%} | {trades} |".format(
+                name=name,
+                total=float(metrics["total_return"]),
+                hit=float(metrics["hit_rate"]),
+                win=float(metrics["avg_win"]),
+                loss=float(metrics["avg_loss"]),
+                dd=float(metrics["max_drawdown"]),
+                trades=int(metrics["trade_count"]),
+            )
+        )
+    return "\n".join(
+        [
+            f"# Exit Model Comparison: {artifact['strategy_slug']}",
+            "",
+            f"Snapshot: `{artifact['snapshot_id']}`",
+            f"Computed at: `{artifact['computed_at']}`",
+            f"Verdict: `{artifact['verdict']}`",
+            "",
+            artifact["decision_note"],
+            "",
+            "| Variant | Total return | Hit rate | Avg win | Avg loss | Max drawdown | Trades |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+            *rows,
+            "",
+        ]
+    )
+
+
+def write_exit_comparison_artifacts(artifact: dict[str, Any], *, kind: str = "exit") -> None:
+    """Persist a comparison decision record. ``kind`` selects the filename stem so
+    the US2 exit-model record and the US5 regime-overlay record don't collide."""
+    slug = artifact["strategy_slug"]
+    stem = f"{slug}_regime_overlay_compare" if kind == "regime" else f"{slug}_exit_compare"
+    comparison_dir = ROOT / "backend" / "backtests" / "comparison"
+    specs_dir = ROOT / "specs" / "015-momentum-risk-hardening"
+    comparison_dir.mkdir(parents=True, exist_ok=True)
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    json_payload = json.dumps(artifact, indent=2, sort_keys=True)
+    markdown = comparison_summary_markdown(artifact)
+    (comparison_dir / f"{stem}.json").write_text(json_payload, encoding="utf-8")
+    (specs_dir / f"{stem}.md").write_text(markdown, encoding="utf-8")
 
 
 def detect_delisted_coverage(
@@ -461,10 +657,16 @@ def run_backtest(
     tickers: list[str] | None = None,
     prices: pd.DataFrame | None = None,
     modeled_exits: bool = False,
-) -> dict:
+    compare_exits: bool = False,
+    regime_overlay: bool = False,
+) -> dict | tuple[dict, dict] | tuple[dict, dict, dict]:
     strategy = registry.get(strategy_slug)
     if strategy is None:
         raise KeyError(strategy_slug)
+    if regime_overlay:
+        # The overlay rescales the fixed-horizon basket per rebalance date, so it
+        # rides the same compare pass that produces the fixed-horizon baseline.
+        compare_exits = True
     uses_value = strategy_slug == "midterm_value_composite"
     uses_fundamentals = strategy_slug == "midterm_52w_high_momentum" or uses_value
 
@@ -496,9 +698,13 @@ def run_backtest(
         prices = prices[prices["ticker"].isin(set(tickers))]
 
     delisted_coverage = detect_delisted_coverage(prices)
+    snapshot_as_of = pd.Timestamp(prices["as_of_date"].max()).date().isoformat()
 
     prices = precompute_features(prices)
-    as_of_dates = _annual_as_of_dates(start, end)
+    rebalance_cadence = flags.backtest_rebalance()
+    cost_bps = flags.backtest_cost_bps()
+    trading_days = pd.DatetimeIndex(sorted(prices["as_of_date"].dropna().unique()))
+    as_of_dates = _rebalance_as_of_dates(trading_days, start, end, rebalance_cadence)
 
     # Pass 1: price-only near-high pools per year + union for fundamentals.
     pools: dict[date, pd.DataFrame] = {}
@@ -514,7 +720,7 @@ def run_backtest(
         facts, sectors = prefetch_fundamentals(sorted(union))
     else:
         facts = {}
-        sectors = {ticker: "Unclassified" for ticker in union}
+        sectors = dict.fromkeys(union, "Unclassified")
 
     # Overlay the live (current) yfinance sector cache as a STATIC sector map.
     # EDGAR companyfacts carries no SIC, so the point-in-time sector source is
@@ -537,14 +743,25 @@ def run_backtest(
 
     # Pass 2: build snapshots, run the strategy, score forward returns.
     by_ticker = prices.groupby("ticker", sort=False)
-    yearly_metrics = []
+    returns_by_year: dict[int, list[float]] = {}
     all_returns: list[float] = []
+    modeled_returns_by_year: dict[int, list[float]] = {}
+    modeled_all_returns: list[float] = []
+    overlay_period_returns: list[float] = []
+    overlay_baseline_period_returns: list[float] = []
+    # Per-rebalance-period modeled-exit basket means, so the regime artifact can
+    # present all three variants on ONE compounding basis (the modeled row would
+    # otherwise be annual-compounded while baseline/overlay are period-compounded).
+    modeled_period_returns: list[float] = []
+    overlay_spy = _load_backtest_spy() if regime_overlay else None
     total_point_in_time = 0
     coverage_notes: list[str] = []
     for as_of in as_of_dates:
+        returns_by_year.setdefault(as_of.year, [])
+        if compare_exits:
+            modeled_returns_by_year.setdefault(as_of.year, [])
         pool = pools[as_of]
         if pool.empty:
-            yearly_metrics.append(yearly_metric(as_of.year, []))
             continue
         snapshot, pit = _build_snapshot(
             by_ticker, pool, as_of, facts, sectors, uses_fundamentals, uses_value
@@ -570,11 +787,9 @@ def run_backtest(
                 " coverage is sparse before ~2011), so this year contributes no trades"
             )
         if snapshot.empty:
-            yearly_metrics.append(yearly_metric(as_of.year, []))
             continue
         candidates = strategy.rules(snapshot)
         if candidates.empty or not {"score", "ticker"}.issubset(candidates.columns):
-            yearly_metrics.append(yearly_metric(as_of.year, []))
             continue
         if "warning_count" in candidates.columns:
             candidates = candidates.sort_values(
@@ -583,9 +798,32 @@ def run_backtest(
         else:
             candidates = candidates.sort_values(["score", "ticker"], ascending=[False, True]).head(TOP_N)
         returns = []
+        modeled_returns = []
         horizon_days = int(strategy.holding_period_days.get("max", HOLDING_HORIZON_DAYS))
         for _, candidate in candidates.iterrows():
             ticker = str(candidate["ticker"])
+            if compare_exits:
+                fixed_value = _forward_return(
+                    by_ticker,
+                    ticker,
+                    as_of,
+                    horizon_days=horizon_days,
+                    cost_bps=cost_bps,
+                )
+                modeled_value = _modeled_exit_return(
+                    by_ticker,
+                    ticker,
+                    as_of,
+                    stop_loss=candidate.get("stop_loss"),
+                    take_profit=candidate.get("take_profit"),
+                    horizon_days=horizon_days,
+                    cost_bps=cost_bps,
+                )
+                if fixed_value is not None:
+                    returns.append(fixed_value)
+                if modeled_value is not None:
+                    modeled_returns.append(modeled_value)
+                continue
             if modeled_exits:
                 value = _modeled_exit_return(
                     by_ticker,
@@ -594,21 +832,49 @@ def run_backtest(
                     stop_loss=candidate.get("stop_loss"),
                     take_profit=candidate.get("take_profit"),
                     horizon_days=horizon_days,
+                    cost_bps=cost_bps,
                 )
             else:
-                value = _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days)
+                value = _forward_return(by_ticker, ticker, as_of, horizon_days=horizon_days, cost_bps=cost_bps)
             if value is not None:
                 returns.append(value)
         all_returns.extend(returns)
-        yearly_metrics.append(yearly_metric(as_of.year, returns))
-        print(f"  {as_of}: pool={len(pool)} candidates={len(candidates)} trades={len(returns)}")
+        returns_by_year[as_of.year].extend(returns)
+        if regime_overlay and returns:
+            # Overlay-OFF baseline is the fixed-horizon basket; the overlay scales
+            # this period's exposure by the regime signal (rest sits in cash = 0).
+            # Both series are period-compounded at the SAME rebalance granularity so
+            # the drawdown A/B is apples-to-apples (SC-006 / FR-006).
+            basket_mean = float(pd.Series(returns, dtype=float).mean())
+            scale = _backtest_regime_scale(as_of, overlay_spy)
+            overlay_baseline_period_returns.append(basket_mean)
+            overlay_period_returns.append(scale * basket_mean)
+            # Same period granularity for the modeled variant so all three regime
+            # rows compound over identical steps (apples-to-apples table).
+            if modeled_returns:
+                modeled_period_returns.append(
+                    float(pd.Series(modeled_returns, dtype=float).mean())
+                )
+        if compare_exits:
+            modeled_all_returns.extend(modeled_returns)
+            modeled_returns_by_year[as_of.year].extend(modeled_returns)
+            print(
+                f"  {as_of}: pool={len(pool)} candidates={len(candidates)} "
+                f"fixed_trades={len(returns)} modeled_trades={len(modeled_returns)}"
+            )
+        else:
+            print(f"  {as_of}: pool={len(pool)} candidates={len(candidates)} trades={len(returns)}")
 
+    yearly_metrics = [
+        yearly_metric(year, returns)
+        for year, returns in sorted(returns_by_year.items())
+    ]
     # Portfolio-correct summary: compound the per-year equal-weight basket returns
     # (yearly_metric.total_return is the mean of that year's trades), NOT every
     # individual trade sequentially. Hit/avg-win/avg-loss are per trade.
     yearly_returns = [ym["total_return"] for ym in yearly_metrics]
     summary = summarize_portfolio(yearly_returns, all_returns)
-    computed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    computed_at = f"{snapshot_as_of}T00:00:00Z"
     # Honest bias check: survivorship passes only when the price archive
     # actually carries delisted tickers (auto-detected). The free Stooq bundle
     # does not, so this stays False for it and flips True once real (or test)
@@ -618,10 +884,88 @@ def run_backtest(
         uses_point_in_time_fundamentals=total_point_in_time > 0,
         delisted_coverage=delisted_coverage,
         uses_fundamentals=uses_fundamentals,
+        cost_bps=cost_bps,
     )
     data_sources = [{"source_name": source_name, "source_as_of": computed_at}]
     if uses_fundamentals:
         data_sources.append({"source_name": "sec_edgar_companyfacts", "source_as_of": computed_at})
+
+    if compare_exits:
+        modeled_yearly_metrics = [
+            yearly_metric(year, returns)
+            for year, returns in sorted(modeled_returns_by_year.items())
+        ]
+        modeled_yearly_returns = [ym["total_return"] for ym in modeled_yearly_metrics]
+        modeled_summary = summarize_portfolio(modeled_yearly_returns, modeled_all_returns)
+        common = {
+            "id": f"{strategy_slug}_{source_name}_{start.isoformat()}_{end.isoformat()}",
+            "strategy_slug": strategy_slug,
+            "data_window_start": start.isoformat(),
+            "data_window_end": end.isoformat(),
+            "data_sources": data_sources,
+            "universe_size": int(len(by_ticker.groups)),
+            "candidate_pool_universe": len(union),
+            "fundamentals_universe": len(union) if uses_fundamentals else 0,
+            "bias_check": bias_check,
+            "coverage_notes": coverage_notes,
+            "code_version": "local",
+            "rebalance_cadence": rebalance_cadence,
+            "cost_model": {"per_side_bps": cost_bps, "applied": cost_bps > 0},
+            "computed_at": computed_at,
+        }
+        fixed_payload = {
+            **common,
+            "yearly_metrics": yearly_metrics,
+            "summary_metrics": summary,
+            "exit_model": "fixed_horizon",
+            "equity_curve": [
+                {"step": idx + 1, "equity": float(value)}
+                for idx, value in enumerate((1 + pd.Series(yearly_returns, dtype=float)).cumprod().tolist())
+            ],
+        }
+        modeled_payload = {
+            **common,
+            "yearly_metrics": modeled_yearly_metrics,
+            "summary_metrics": modeled_summary,
+            "exit_model": "modeled_levels",
+            "equity_curve": [
+                {"step": idx + 1, "equity": float(value)}
+                for idx, value in enumerate((1 + pd.Series(modeled_yearly_returns, dtype=float)).cumprod().tolist())
+            ],
+        }
+        if regime_overlay:
+            # Period-compounded baseline (overlay OFF) + the regime-scaled overlay,
+            # matched at rebalance granularity so their drawdowns are comparable.
+            baseline_summary = summarize_portfolio(
+                overlay_baseline_period_returns, all_returns
+            )
+            overlay_summary = summarize_portfolio(
+                overlay_period_returns, all_returns
+            )
+            # Modeled variant on the SAME period basis as baseline/overlay so all
+            # three regime rows are directly comparable (the verdict only uses
+            # baseline-vs-overlay, but the table must not mix bases).
+            modeled_period_summary = summarize_portfolio(
+                modeled_period_returns, modeled_all_returns
+            )
+            baseline_period_payload = {
+                **common,
+                "summary_metrics": baseline_summary,
+                "exit_model": "fixed_horizon",
+            }
+            modeled_period_payload = {
+                **common,
+                "summary_metrics": modeled_period_summary,
+                "exit_model": "modeled_levels",
+            }
+            overlay_payload = {
+                **common,
+                "summary_metrics": overlay_summary,
+                "exit_model": "regime_overlay",
+                "regime_risk_budget_unfavorable": flags.regime_risk_budget_unfavorable(),
+            }
+            return baseline_period_payload, modeled_period_payload, overlay_payload
+        return fixed_payload, modeled_payload
 
     return {
         "id": f"{strategy_slug}_{source_name}_{start.isoformat()}_{end.isoformat()}",
@@ -638,6 +982,8 @@ def run_backtest(
         "summary_metrics": summary,
         "code_version": "local",
         "exit_model": "modeled_levels" if modeled_exits else "fixed_horizon",
+        "rebalance_cadence": rebalance_cadence,
+        "cost_model": {"per_side_bps": cost_bps, "applied": cost_bps > 0},
         "computed_at": computed_at,
         # Annual rebalanced-portfolio equity curve (one step per year), compounding
         # the per-year equal-weight basket returns — not sequential per-trade.
@@ -677,7 +1023,51 @@ def main() -> None:
         action="store_true",
         help="Opt in to feature-011 level-driven exits; fixed-horizon remains default until gated re-baseline.",
     )
+    parser.add_argument(
+        "--compare-exits",
+        action="store_true",
+        help="Run fixed-horizon and modeled-level exits, then write the US2 comparison artifact without rebaking baseline.",
+    )
+    parser.add_argument(
+        "--regime-overlay",
+        action="store_true",
+        help="Run with/without the opt-in regime-aware risk budget (US5) and write the gated regime-overlay comparison artifact without rebaking baseline.",
+    )
     args = parser.parse_args()
+
+    if args.regime_overlay:
+        baseline, modeled, overlay = run_backtest(
+            args.strategy,
+            date.fromisoformat(args.start),
+            date.fromisoformat(args.end),
+            _tickers(args.tickers) if args.tickers else None,
+            regime_overlay=True,
+        )
+        artifact = build_exit_comparison_artifact(
+            args.strategy, baseline, modeled, regime_overlay=overlay
+        )
+        write_exit_comparison_artifacts(artifact, kind="regime")
+        print(
+            f"Wrote regime-overlay comparison artifact for {args.strategy}: "
+            f"{artifact['verdict']}"
+        )
+        return
+
+    if args.compare_exits:
+        fixed, modeled = run_backtest(
+            args.strategy,
+            date.fromisoformat(args.start),
+            date.fromisoformat(args.end),
+            _tickers(args.tickers) if args.tickers else None,
+            compare_exits=True,
+        )
+        artifact = build_exit_comparison_artifact(args.strategy, fixed, modeled)
+        write_exit_comparison_artifacts(artifact)
+        print(
+            f"Wrote exit comparison artifact for {args.strategy}: "
+            f"{artifact['verdict']}"
+        )
+        return
 
     result = run_backtest(
         args.strategy,

@@ -308,3 +308,80 @@ def shariah_refresh_interval_days() -> int:
     Default 90 (~quarterly). Override with SCREENER_SHARIAH_REFRESH_INTERVAL_DAYS.
     """
     return int(os.getenv("SCREENER_SHARIAH_REFRESH_INTERVAL_DAYS", "90"))
+
+
+# --- Feature 015: momentum risk and validation hardening knobs -------------
+
+_BACKTEST_REBALANCE_CADENCES = {"A", "Q", "M"}
+
+
+def backtest_rebalance() -> str:
+    """Offline backtest rebalance cadence: annual, quarterly, or monthly.
+
+    Default Q strengthens newly generated artifacts without changing the served
+    baked baseline until the owner re-runs and commits that artifact.
+    Override with SCREENER_BACKTEST_REBALANCE=A|Q|M.
+    """
+    value = os.getenv("SCREENER_BACKTEST_REBALANCE", "Q").strip().upper()
+    return value if value in _BACKTEST_REBALANCE_CADENCES else "Q"
+
+
+def backtest_cost_bps() -> float:
+    """Per-side trading cost in basis points for offline backtest artifacts."""
+    return float(os.getenv("SCREENER_BACKTEST_COST_BPS", "10"))
+
+
+def backtest_min_reliable_trades() -> int:
+    """Minimum per-period trades before a backtest period is labelled reliable."""
+    return int(os.getenv("SCREENER_BACKTEST_MIN_RELIABLE_TRADES", "10"))
+
+
+def sizing_fallback_atr_mult() -> float:
+    """Synthetic ATR stop-distance multiplier for conservative no-stop sizing."""
+    return float(os.getenv("SCREENER_SIZING_FALLBACK_ATR_MULT", "10"))
+
+
+def portfolio_heat_ceiling() -> float:
+    """Aggregate open-risk ceiling as a fraction of capital.
+
+    Default 1.0 keeps current typical single-position sizing from binding until
+    US4 applies the ceiling logic and an operator chooses a tighter value.
+    """
+    return float(os.getenv("SCREENER_PORTFOLIO_HEAT_CEILING", "1.0"))
+
+
+def regime_risk_budget_enabled() -> bool:
+    """Whether the opt-in regime-aware risk budget overlay is enabled."""
+    return os.getenv("SCREENER_REGIME_RISK_BUDGET", "0").strip().lower() in _TRUTHY
+
+
+def regime_risk_budget_unfavorable() -> float:
+    """Risk-budget scale applied when the opt-in overlay sees unfavorable regime."""
+    return float(os.getenv("SCREENER_REGIME_RISK_BUDGET_UNFAVORABLE", "0.5"))
+
+
+# --- Feature 016: momentum cockpit / pipeline board knobs ------------------
+
+
+def pipeline_enabled() -> bool:
+    """Whether the momentum candidate-lifecycle pipeline board is available.
+
+    DEFAULT OFF so the cockpit ``POST /pipeline/board`` endpoint 404s and the
+    home page degrades to today's panels; existing screens, rankings, levels,
+    sizing, and backtests remain byte-identical until the owner explicitly
+    enables the synthesis layer. No build-time env flag — this runtime flag is
+    the single gate. Override with SCREENER_PIPELINE_ENABLED=1.
+    """
+    return os.getenv("SCREENER_PIPELINE_ENABLED", "0").strip().lower() in _TRUTHY
+
+
+def fit_reward_to_risk_floor() -> float:
+    """Minimum reward-to-risk ratio a candidate must clear as a fit fact.
+
+    Below this floor the reward/risk fact fails and contributes to a weaker
+    ``fit_band``. Default 1.5 (a winner's reward should be at least 1.5x its
+    risk). Purely a synthesis threshold over numbers the app already produces —
+    it changes no gate, level, or sizing output. Override with
+    SCREENER_FIT_REWARD_TO_RISK_FLOOR.
+    """
+    return float(os.getenv("SCREENER_FIT_REWARD_TO_RISK_FLOOR", "1.5"))

@@ -1,0 +1,33 @@
+{
+  "computed_at": "2025-03-31T00:00:00Z",
+  "decision_note": "Overlay-OFF baseline retained because the regime-aware risk budget did not document a drawdown improvement without sacrificing total return.",
+  "snapshot_id": "midterm_52w_high_momentum_stooq_2008-01-01_2024-12-31",
+  "strategy_slug": "midterm_52w_high_momentum",
+  "variants": {
+    "fixed_horizon": {
+      "avg_loss": 0.11776876344999491,
+      "avg_win": 0.1611322877916657,
+      "hit_rate": 0.5357142857142857,
+      "max_drawdown": 0.7378887349218606,
+      "total_return": 3.1119015333229516,
+      "trade_count": 252
+    },
+    "modeled_levels": {
+      "avg_loss": 0.10016864748774217,
+      "avg_win": 0.18356017465338034,
+      "hit_rate": 0.3531746031746032,
+      "max_drawdown": 0.2832815838413838,
+      "total_return": -0.04882375095057201,
+      "trade_count": 252
+    },
+    "regime_overlay": {
+      "avg_loss": 0.11776876344999491,
+      "avg_win": 0.1611322877916657,
+      "hit_rate": 0.5357142857142857,
+      "max_drawdown": 0.7378887349218606,
+      "total_return": 3.1119015333229516,
+      "trade_count": 252
+    }
+  },
+  "verdict": "keep_baseline"
+}

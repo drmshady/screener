@@ -32,6 +32,52 @@ function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+/** Risk distance (entry − stop) and reward-to-risk, preferring the bounded-level
+ * metadata and falling back to the raw entry/stop/target. Neutral, non-directive. */
+function riskReward(match: Candidate) {
+  const entry = Number(match.entry);
+  const stop = Number(match.stop_loss);
+  const target = Number(match.take_profit);
+  const risk =
+    match.risk_distance !== null && match.risk_distance !== undefined
+      ? match.risk_distance
+      : Number.isFinite(entry) && Number.isFinite(stop)
+        ? entry - stop
+        : null;
+  const reward =
+    match.reward_distance !== null && match.reward_distance !== undefined
+      ? match.reward_distance
+      : Number.isFinite(target) && Number.isFinite(entry)
+        ? target - entry
+        : null;
+  if (risk === null || !Number.isFinite(risk) || risk <= 0) {
+    return null;
+  }
+  const riskPct = Number.isFinite(entry) && entry > 0 ? risk / entry : null;
+  const rr = reward !== null && Number.isFinite(reward) && reward > 0 ? reward / risk : null;
+  return { risk, riskPct, rr };
+}
+
+/** Human-readable label for the sizing binding constraint (no raw JSON keys). */
+function bindingConstraintLabel(value?: string | null) {
+  switch (value) {
+    case 'risk_target':
+      return 'Per-trade risk target';
+    case 'conviction':
+      return 'Conviction adjustment';
+    case 'position_cap':
+      return 'Position cap';
+    case 'sector_cap':
+      return 'Sector cap';
+    case 'portfolio_heat':
+      return 'Portfolio heat ceiling';
+    case 'conservative_fallback':
+      return 'Conservative fallback (no stop)';
+    default:
+      return 'Within configured limits';
+  }
+}
+
 type SizingState = {
   loading?: boolean;
   status?: number;
@@ -256,6 +302,17 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                   <dd className="font-semibold text-slate-950">{formatMoney(match.take_profit, detail.ticker)}</dd>
                 </div>
               </dl>
+              {(() => {
+                const rr = riskReward(match);
+                if (!rr) return null;
+                return (
+                  <p className="mt-2 text-xs text-slate-600">
+                    Risk distance {formatMoney(String(rr.risk), detail.ticker)}
+                    {rr.riskPct !== null ? ` (${percent(rr.riskPct)} of entry)` : ''}
+                    {rr.rr !== null ? ` · Reward-to-risk ${rr.rr.toFixed(1)}x` : ''}
+                  </p>
+                );
+              })()}
               {match.entry_timing ? <EntryReadinessDetails entryTiming={match.entry_timing} /> : null}
               {match.gate_results && match.gate_results.length > 0 ? (
                 <div className="mt-4 border border-slate-200">
@@ -343,6 +400,35 @@ export default function CandidatePage({ params }: { params: Promise<{ ticker: st
                     <dt className="text-xs uppercase text-slate-500">Caps respected</dt>
                     <dd className="font-semibold text-slate-950">{sizingState.result.caps_respected ? 'Yes' : 'No'}</dd>
                   </div>
+                  <div>
+                    <dt className="text-xs uppercase text-slate-500">Binding constraint</dt>
+                    <dd className="font-semibold text-slate-950">
+                      {bindingConstraintLabel(sizingState.result.binding_constraint)}
+                    </dd>
+                  </div>
+                  {sizingState.result.reward_to_risk !== null &&
+                  sizingState.result.reward_to_risk !== undefined ? (
+                    <div>
+                      <dt className="text-xs uppercase text-slate-500">Reward-to-risk</dt>
+                      <dd className="font-semibold text-slate-950">
+                        {sizingState.result.reward_to_risk.toFixed(1)}x
+                      </dd>
+                    </div>
+                  ) : null}
+                  {sizingState.result.portfolio_heat_after_pct !== null &&
+                  sizingState.result.portfolio_heat_after_pct !== undefined ? (
+                    <div>
+                      <dt className="text-xs uppercase text-slate-500">Portfolio heat if taken</dt>
+                      <dd className="font-semibold text-slate-950">
+                        {percent(sizingState.result.portfolio_heat_after_pct)}
+                      </dd>
+                    </div>
+                  ) : null}
+                  {sizingState.result.conservative_fallback ? (
+                    <p className="sm:col-span-5 text-amber-800">
+                      No stop was available, so a conservative fallback size was used.
+                    </p>
+                  ) : null}
                   <p className="sm:col-span-5 text-slate-600">{sizingState.result.reasoning}</p>
                 </div>
               ) : null}

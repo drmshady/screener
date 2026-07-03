@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from ..lib import flags as risk_flags
 from ..models.portfolio import (
     ConcentrationFlag,
     PortfolioCaps,
@@ -15,6 +16,29 @@ from ..models.portfolio import (
 
 def holding_value(holding: SizingHolding) -> Decimal:
     return money(holding.shares * holding.current_price)
+
+
+def open_risk_stop_fraction() -> Decimal:
+    """Conservative synthetic risk-to-stop fraction charged to a position that
+    carries no explicit stop in the sizing request (a wide ATR-multiple of its
+    market value). Reuses the fallback-sizing knobs so the heat proxy and the
+    conservative no-stop size share one definition (Decision 6, FR-010)."""
+    return Decimal(str(risk_flags.sizing_inverse_vol_baseline())) * Decimal(
+        str(risk_flags.sizing_fallback_atr_mult())
+    )
+
+
+def existing_open_risk(
+    holdings: list[SizingHolding], *, stop_fraction: Decimal | None = None
+) -> Decimal:
+    """Aggregate open risk (portfolio heat) across existing holdings: the sum of
+    each position's conservative synthetic risk-to-stop. Empty portfolios yield
+    zero; the proposed position's own risk is added by the caller (FR-010)."""
+    fraction = stop_fraction if stop_fraction is not None else open_risk_stop_fraction()
+    total = Decimal("0")
+    for holding in holdings:
+        total += holding_value(holding) * fraction
+    return money(total)
 
 
 def aggregate_exposure(

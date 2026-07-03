@@ -4,7 +4,14 @@ from decimal import Decimal
 from typing import Any
 
 from ..lib.disclaimer import utc_now_iso
-from ..models.portfolio import Holding, LevelBlock, PortfolioHolding, HoldingLevels, money, pct
+from ..models.portfolio import (
+    Holding,
+    HoldingLevels,
+    LevelBlock,
+    PortfolioHolding,
+    money,
+    pct,
+)
 from ..screening.engine import build_single_ticker_snapshot
 from ..strategies import midterm_52w_high_momentum as midterm
 
@@ -41,7 +48,12 @@ def _distance(current_price: Decimal | None, level: Decimal | None) -> float | N
     return float((level - current_price) / current_price)
 
 
-def _block(levels: dict[str, Any], current_price: Decimal | None) -> LevelBlock:
+def _block(
+    levels: dict[str, Any],
+    current_price: Decimal | None,
+    *,
+    status_override: str | None = None,
+) -> LevelBlock:
     stop_loss = _money_or_none(levels.get("stop_loss"))
     take_profit = _money_or_none(levels.get("take_profit"))
     state = str(levels.get("levels_state") or "insufficient_data")
@@ -58,13 +70,56 @@ def _block(levels: dict[str, Any], current_price: Decimal | None) -> LevelBlock:
         rationale=str(levels.get("rationale") or "Insufficient data to derive bounded levels."),
         distance_to_stop_pct=_distance(current_price, stop_loss),
         distance_to_target_pct=_distance(current_price, take_profit),
-        status=_status(
+        status=status_override
+        or _status(
             levels_state=state,
             current_price=current_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
         ),
     )
+
+
+def _trailing_block(
+    current_row: Any,
+    current_price: Decimal | None,
+    avg_cost: Decimal,
+    current_condition_stop: Decimal | None,
+) -> LevelBlock | None:
+    """A current-price-anchored trailing stop from the chandelier exit (US3/FR-007).
+
+    Only surfaced for a genuine winner: the current price sits above the average
+    cost AND the chandelier stop already sits above cost, so the block protects
+    unrealized gains. It is never looser than the cost-anchored current-condition
+    stop. Any missing input, a non-winner, or a stop that fails to clear cost
+    degrades to None — never a fabricated, looser level (FR-008).
+    """
+    chandelier = _money_or_none(current_row.get("chandelier_exit"))
+    if current_price is None or chandelier is None or chandelier <= 0:
+        return None
+    if current_price <= avg_cost or chandelier <= avg_cost:
+        return None
+    stop = chandelier
+    # Never present a trailing stop looser than the current-condition stop.
+    if current_condition_stop is not None and stop < current_condition_stop:
+        stop = current_condition_stop
+    if stop >= current_price:
+        return None
+    trailing_levels = {
+        "entry": current_price,
+        "stop_loss": stop,
+        "take_profit": None,
+        "risk_distance": money(current_price - stop),
+        "reward_distance": None,
+        "reward_ceiling_basis": None,
+        "bounds_applied": [],
+        "levels_state": "ok",
+        "rationale": (
+            "Trailing chandelier exit (22-bar high − 3×ATR) sits above the "
+            "average cost, protecting unrealized gains."
+        ),
+    }
+    return _block(trailing_levels, current_price, status_override="gains_protected")
 
 
 def _levels_for_row(row: Any, avg_cost: Decimal) -> dict[str, Any]:
@@ -110,6 +165,12 @@ def compute_holding_levels(holding: Holding) -> PortfolioHolding:
     current_levels = _levels_for_row(current_row, holding.avg_cost)
     notes = list(original_notes) + list(current_notes)
 
+    original_block = _block(original_levels, current_price)
+    current_block = _block(current_levels, current_price)
+    trailing_block = _trailing_block(
+        current_row, current_price, holding.avg_cost, current_block.stop_loss
+    )
+
     return PortfolioHolding(
         **holding.model_dump(),
         priceable=True,
@@ -120,8 +181,9 @@ def compute_holding_levels(holding: Holding) -> PortfolioHolding:
         data_notes=notes,
         data_as_of=max(original_as_of, current_as_of),
         levels=HoldingLevels(
-            original_plan=_block(original_levels, current_price),
-            current_condition=_block(current_levels, current_price),
+            original_plan=original_block,
+            current_condition=current_block,
+            trailing=trailing_block,
         ),
     )
 

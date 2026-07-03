@@ -166,11 +166,33 @@ def derive_bounded_levels(
         return _insufficient(entry, "Insufficient reward room to derive bounded levels.")
 
     take_profit = entry + reward_distance
-    rationale = (
-        f"Stop uses the {stop_rule} with risk distance bounded to "
-        f"{risk_distance:.2f}; target uses {take_profit_r_multiple:g}R and is "
-        f"checked against the {reward_ceiling_basis.replace('_', ' ')} ceiling."
-    )
+
+    # Honest rationale (Decision 8 / FR-012, FR-013): name the constraint that
+    # actually set the stop, and only claim a reward ceiling when one bound.
+    if "risk_cap" in bounds_applied:
+        stop_clause = (
+            f"Stop set by the ATR risk cap, which bounded the risk distance to "
+            f"{risk_distance:.2f}"
+        )
+    elif "risk_floor" in bounds_applied:
+        stop_clause = (
+            f"Stop set by the ATR risk floor, which held the risk distance at "
+            f"{risk_distance:.2f}"
+        )
+    else:
+        stop_clause = (
+            f"Stop uses the {stop_rule} with risk distance {risk_distance:.2f}"
+        )
+
+    if "reward_ceiling" in bounds_applied:
+        reward_clause = (
+            f"target uses {take_profit_r_multiple:g}R, capped by the "
+            f"{reward_ceiling_basis.replace('_', ' ')} ceiling"
+        )
+    else:
+        reward_clause = f"target uses {take_profit_r_multiple:g}R"
+
+    rationale = f"{stop_clause}; {reward_clause}."
 
     return {
         "entry": entry,

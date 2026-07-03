@@ -6,6 +6,7 @@ def build_bias_check(
     uses_point_in_time_fundamentals: bool,
     delisted_coverage: bool = False,
     uses_fundamentals: bool = True,
+    cost_bps: float = 0.0,
 ) -> dict:
     if delisted_coverage and source_name == "stooq":
         survivorship_note = "Stooq deep history with delisted-ticker coverage; survivor-bias-free."
@@ -24,7 +25,7 @@ def build_bias_check(
         },
         "lookahead_bias": {
             "passed": True,
-            "note": "Candidate selection uses prices at or before each annual as-of date.",
+            "note": "Candidate selection uses prices at or before each rebalance as-of date.",
         },
         "point_in_time_fundamentals": {
             "passed": (not uses_fundamentals) or uses_point_in_time_fundamentals,
@@ -39,8 +40,12 @@ def build_bias_check(
             ),
         },
         "costs": {
-            "passed": True,
-            "note": "Turnover is recorded in summary metrics; explicit slippage/commission modeling is not included in this MVP backtest.",
+            "passed": cost_bps > 0,
+            "note": (
+                f"modeled: {cost_bps:g} bps/side"
+                if cost_bps > 0
+                else "No transaction costs modeled (0 bps/side)."
+            ),
         },
     }
 
