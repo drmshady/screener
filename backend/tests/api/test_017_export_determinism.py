@@ -34,6 +34,15 @@ _SENTIMENT_HEADING = "### External context — sentiment & narrative"
 _SOURCE = make_normal_report("NVDA").sources[0]
 
 
+@pytest.fixture(autouse=True)
+def _no_export_generation(monkeypatch):
+    """Determinism here is about REUSE of captured reports; stub the feature-017
+    on-demand generation OFF so un-captured tickers stay section-free and no live
+    provider is hit. Generation determinism (generate-once-then-reuse) is covered
+    in test_export_sentiment_generation.py."""
+    monkeypatch.setattr(portfolio_api, "_generate_sentiment", lambda *a, **k: None)
+
+
 @pytest.fixture
 def store(monkeypatch, tmp_path):
     from backend.src.sentiment.store import CapturedReportStore

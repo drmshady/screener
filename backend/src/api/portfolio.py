@@ -20,9 +20,15 @@ from ..data.portfolio_store import (
     save_transactions,
 )
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
-from ..lib.flags import personal_use_directive, portfolio_heat_ceiling
-from ..models.sentiment import SentimentReport
+from ..lib.flags import (
+    personal_use_directive,
+    portfolio_heat_ceiling,
+    sentiment_export_generation,
+)
+from ..models.sentiment import SelectionOrigin, SentimentReport
+from ..sentiment.budget import BudgetGuard as _BudgetGuard
 from ..sentiment.store import CapturedReportStore as _CapturedReportStore
+from . import sentiment as _sentiment_api
 from ..models.portfolio import (
     HoldingAdvisorPromptResponse,
     ImportRequest,
@@ -53,9 +59,18 @@ _SUPPORTED_HOLDINGS_STRATEGY = "midterm_52w_high_momentum"
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
-# Kept as a module global so tests can inject a temp/seeded store without touching
-# the real captured-report DB (mirrors api/strategies.py).
+# Kept as module globals so tests can inject a temp/seeded store + budget and
+# stub on-demand generation without touching the real DB or live providers
+# (mirrors api/strategies.py).
 CapturedReportStore = _CapturedReportStore
+BudgetGuard = _BudgetGuard
+
+
+def _generate_sentiment(ticker: str, origin: SelectionOrigin, store, budget) -> SentimentReport:
+    """Generate + capture one report (feature 017 extension). Isolated as a
+    module-level indirection so tests can stub generation off (return None) or
+    inject a deterministic report without hitting live providers."""
+    return _sentiment_api.generate_and_capture(ticker, origin, store=store, budget=budget)
 
 
 def _resolve_captured_sentiment(tickers) -> dict[str, SentimentReport]:
@@ -73,6 +88,46 @@ def _resolve_captured_sentiment(tickers) -> dict[str, SentimentReport]:
             report = store.latest_for_ticker(ticker)
         except Exception:
             report = None
+        if report is not None:
+            resolved[ticker] = report
+    return resolved
+
+
+def _resolve_or_generate_sentiment(
+    tickers, *, origin: SelectionOrigin
+) -> dict[str, SentimentReport]:
+    """Feature 017 extension for the portfolio + watchlist exports: embed the
+    most-recently captured sentiment per ticker; if a ticker has none captured
+    yet, GENERATE and capture one on demand (generate-once-then-reuse), so the
+    exported prompt always carries sentiment and subsequent re-exports reuse the
+    stored report.
+
+    Best-effort throughout: a store failure yields no sentiment; a per-ticker
+    lookup/generation failure omits only that ticker's section (fail-soft,
+    FR-010). Generation is skipped entirely when
+    `sentiment_export_generation()` is OFF, restoring the strict reuse-only path.
+    The screener export deliberately stays reuse-only (uses
+    `_resolve_captured_sentiment`) and never generates."""
+    try:
+        store = CapturedReportStore()
+    except Exception:
+        return {}
+    generate = sentiment_export_generation()
+    budget = None
+    resolved: dict[str, SentimentReport] = {}
+    for ticker in tickers:
+        report = None
+        try:
+            report = store.latest_for_ticker(ticker)
+        except Exception:
+            report = None
+        if report is None and generate:
+            try:
+                if budget is None:
+                    budget = BudgetGuard()
+                report = _generate_sentiment(ticker, origin, store, budget)
+            except Exception:
+                report = None
         if report is not None:
             resolved[ticker] = report
     return resolved
@@ -410,8 +465,8 @@ def portfolio_holdings_advisor_prompt(
     open_holdings = [h for h in holdings if h.status == "open"]
     strategy = registry.get(body.strategy_slug)
     directive = personal_use_directive()
-    sentiment_by_ticker = _resolve_captured_sentiment(
-        [h.ticker for h in open_holdings]
+    sentiment_by_ticker = _resolve_or_generate_sentiment(
+        [h.ticker for h in open_holdings], origin=SelectionOrigin.HOLDING
     )
     prompt = build_portfolio_advisor_prompt(
         open_holdings,
@@ -485,8 +540,8 @@ def watchlist_advisor_prompt(
         if result.data_as_of:
             newest_as_of = max(newest_as_of or result.data_as_of, result.data_as_of)
 
-    sentiment_by_ticker = _resolve_captured_sentiment(
-        [r.ticker for r in results] + unresolved
+    sentiment_by_ticker = _resolve_or_generate_sentiment(
+        [r.ticker for r in results] + unresolved, origin=SelectionOrigin.SCREENER
     )
     directive = personal_use_directive()
     data_as_of = newest_as_of or utc_now_iso()
@@ -530,7 +585,9 @@ def holding_advisor_prompt(
         )
     strategy = registry.get(body.strategy_slug)
     directive = personal_use_directive()
-    sentiment = _resolve_captured_sentiment([match.ticker]).get(match.ticker)
+    sentiment = _resolve_or_generate_sentiment(
+        [match.ticker], origin=SelectionOrigin.HOLDING
+    ).get(match.ticker)
     prompt = build_holding_advisor_prompt(
         match,
         strategy,

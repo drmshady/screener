@@ -14,6 +14,14 @@ client = TestClient(app)
 
 _SENTIMENT_HEADING = "### External context — sentiment & narrative"
 _ENDPOINT = "/portfolio/watchlist/advisor-prompt"
+
+
+@pytest.fixture(autouse=True)
+def _no_export_generation(monkeypatch):
+    """Feature 017 extension: the watchlist export now GENERATES sentiment on
+    demand. These reuse-only shape/embedding tests stub generation OFF; the
+    generate-once-then-reuse behavior lives in test_export_sentiment_generation.py."""
+    monkeypatch.setattr(portfolio_api, "_generate_sentiment", lambda *a, **k: None)
 _DISCLAIMER = (
     "This product is for informational purposes only and does not constitute "
     "financial advice. It does not place trades."

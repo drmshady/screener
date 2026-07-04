@@ -60,6 +60,26 @@ def post_sentiment_report(request: ReportRequest) -> SentimentReportResponse:
     )
 
 
+def generate_and_capture(
+    ticker: str,
+    origin: SelectionOrigin,
+    *,
+    store: _CapturedReportStore,
+    budget: _BudgetGuard,
+) -> SentimentReport:
+    """Generate + capture ONE sentiment report for `ticker` using the same
+    pipeline as POST /sentiment/report (feature 017 extension: on-demand
+    generation from the portfolio/watchlist exports).
+
+    Fail-soft: any provider/scorer/narrative error yields an `unavailable`
+    report rather than raising. Successful captures are persisted, so the next
+    export reuses them (generate-once-then-reuse). Respects the shared
+    `BudgetGuard`, so paid narrative calls stay within the monthly cap."""
+    return _safe_report_for_selection(
+        Selection(ticker=ticker, origin=origin), store=store, budget=budget
+    )
+
+
 def _safe_report_for_selection(
     selection: Selection,
     *,

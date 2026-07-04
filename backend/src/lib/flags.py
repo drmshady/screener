@@ -40,6 +40,19 @@ def sentiment_enabled() -> bool:
     return os.getenv("SCREENER_SENTIMENT_ENABLED", "0").strip().lower() in _TRUTHY
 
 
+def sentiment_export_generation() -> bool:
+    """Whether the portfolio + watchlist advisor-prompt exports may GENERATE a
+    sentiment report on demand for a name that has none captured yet (feature 017
+    extension: generate-once-then-reuse).
+
+    DEFAULT ON so a freshly-exported prompt always carries sentiment without a
+    separate capture step. The screener export never generates (reuse-only) by
+    design. Set SCREENER_SENTIMENT_EXPORT_GENERATION=0 to restore the strict
+    reuse-only / zero-paid-call-at-export behavior.
+    """
+    return os.getenv("SCREENER_SENTIMENT_EXPORT_GENERATION", "1").strip().lower() in _TRUTHY
+
+
 def sentiment_scorer() -> str:
     """Sentiment scorer backend: "finbert" or "lexicon".
 

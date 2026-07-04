@@ -22,6 +22,16 @@ client = TestClient(app)
 _SENTIMENT_HEADING = "### External context — sentiment & narrative"
 
 
+@pytest.fixture(autouse=True)
+def _no_export_generation(monkeypatch):
+    """Feature 017 extension: the portfolio/watchlist exports now GENERATE
+    sentiment on demand for names with no captured report. These are the
+    reuse-only tests, so stub generation OFF here (absent-report blocks must
+    stay byte-identical); the generate-once-then-reuse behavior is covered in
+    test_export_sentiment_generation.py."""
+    monkeypatch.setattr(portfolio_api, "_generate_sentiment", lambda *a, **k: None)
+
+
 def _level_block() -> LevelBlock:
     return LevelBlock(
         entry=Decimal("100.00"),

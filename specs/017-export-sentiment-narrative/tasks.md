@@ -145,6 +145,33 @@ list yields `watched_count: 0` with a clear no-names body (quickstart §4).
 
 ---
 
+## Post-plan extension: on-demand sentiment generation (owner decision)
+
+After the base feature landed, the owner asked that a **generated advisor prompt embed sentiment
+even for names never captured before**, rather than requiring a separate capture step. This is a
+deliberate, scoped relaxation of the original **reuse-only** design (FR-009) for the **portfolio +
+watchlist** exports only; the **screener** export stays strictly reuse-only (a screen can be 30–50
+names — too many to generate per export).
+
+- **Behavior**: `generate-once-then-reuse`. On export, any portfolio/watchlist ticker with no
+  captured report has ONE generated + captured via the same pipeline as `POST /sentiment/report`
+  (`api/sentiment.generate_and_capture`), through the shared `BudgetGuard` (paid narrative stays
+  within the monthly cap; degrades to the free template when exhausted). Subsequent exports reuse
+  the stored report, so re-export stays deterministic and spends nothing more.
+- **Fail-soft preserved (FR-010)**: any per-ticker generation error omits only that ticker's
+  section; the export still succeeds.
+- **Reversible**: gated by `sentiment_export_generation()` (env `SCREENER_SENTIMENT_EXPORT_GENERATION`,
+  default **ON**); set to `0` to restore the strict reuse-only / zero-paid-call-at-export path.
+- **Code**: `lib/flags.py` (new flag), `api/sentiment.py` (`generate_and_capture`),
+  `api/portfolio.py` (`_resolve_or_generate_sentiment` + `_generate_sentiment`, wired into the
+  holdings / watchlist / single-holding exports). Screener (`api/strategies.py`) unchanged.
+- **Tests**: `backend/tests/api/test_export_sentiment_generation.py` (generate-once-then-reuse,
+  watchlist generation, screener-never-generates, fail-soft, flag-OFF). Existing reuse-only tests
+  stub generation OFF so their absent-report blocks stay byte-identical. Full backend suite green
+  (680 passed).
+
+---
+
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 **Purpose**: Cross-surface guarantees (no-directive lint, determinism, cost, no baseline drift) and
