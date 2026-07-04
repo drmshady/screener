@@ -10,7 +10,12 @@ const FORBIDDEN_WORDS = [' Buy', ' Sell', 'Recommended', 'Strong buy'];
 async function assertNoDirectiveCopy(page: Page) {
   const bodyText = await page.evaluate(() => {
     const clone = document.body.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('[data-personal-use-prompt]').forEach((el) => el.remove());
+    // Feature 016 (US4): the in-app transaction-record controls (`data-transaction-
+    // record`) label the owner's OWN recorded buy/sell trades — factual bookkeeping,
+    // not directive advice. Excluded here to match the canonical no-directive lint.
+    clone
+      .querySelectorAll('[data-personal-use-prompt], [data-transaction-record]')
+      .forEach((el) => el.remove());
     return clone.innerText;
   });
   for (const word of FORBIDDEN_WORDS) {

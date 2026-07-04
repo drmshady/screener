@@ -1041,6 +1041,32 @@ export async function fetchHoldingAdvisorPrompt(
 }
 
 // ---------------------------------------------------------------------------
+// Feature 017 (US3): new watchlist advisor-prompt export in the screener format
+// ---------------------------------------------------------------------------
+
+export const WatchlistAdvisorPromptResponseSchema = z.object({
+  strategy: z.string(),
+  watched_count: z.number(),
+  personal_use_directive: z.boolean(),
+  prompt: z.string(),
+  data_as_of: z.string(),
+  disclaimer: z.string(),
+});
+
+export type WatchlistAdvisorPromptResponse = z.infer<typeof WatchlistAdvisorPromptResponseSchema>;
+
+export async function fetchWatchlistAdvisorPrompt(body: {
+  strategy_slug: string;
+  tickers: string[];
+  as_of?: string | null;
+}): Promise<WatchlistAdvisorPromptResponse> {
+  return fetchApi('/portfolio/watchlist/advisor-prompt', WatchlistAdvisorPromptResponseSchema, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Feature 013 (US4): live entry-timing status for a watchlist ticker
 // ---------------------------------------------------------------------------
 

@@ -5,7 +5,16 @@ const forbiddenWords = [' Buy', ' Sell', 'Recommended', 'Strong buy'];
 
 async function expectSafePage(page, name: string) {
   await expect(page.locator(`text="${COPY.GLOBAL.DISCLAIMER}"`)).toBeVisible({ timeout: 45_000 });
-  const bodyText = await page.evaluate(() => document.body.innerText);
+  const bodyText = await page.evaluate(() => {
+    const clone = document.body.cloneNode(true) as HTMLElement;
+    // Feature 016 (US4): the in-app transaction-record controls (`data-transaction-
+    // record`) label the owner's OWN recorded buy/sell trades — factual bookkeeping,
+    // not directive advice. Excluded here to match the canonical no-directive lint.
+    clone
+      .querySelectorAll('[data-personal-use-prompt], [data-transaction-record]')
+      .forEach((el) => el.remove());
+    return clone.innerText;
+  });
   expect(bodyText).toMatch(/Data as of|As of|data_as_of/i);
   for (const word of forbiddenWords) {
     expect(bodyText.toLowerCase()).not.toContain(word.toLowerCase());

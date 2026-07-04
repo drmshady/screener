@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { EntryStatus, EntryTiming, fetchEntryStatus } from '@/lib/api';
 import { useAppStore, WatchlistEntry } from '@/lib/store';
+import { CopyWatchlistAdvisorPrompt } from '@/components/CopyWatchlistAdvisorPrompt';
 
 function money(value: string) {
   return `$${Number(value).toFixed(2)}`;
@@ -107,6 +108,15 @@ export default function WatchlistPage() {
     [watchlist],
   );
 
+  // Feature 017 (US3): the watched tickers + the strategy to export them under.
+  // When every open entry shares one strategy we honor it; a mixed watchlist
+  // falls back to the primary momentum strategy.
+  const exportTickers = useMemo(() => openEntries.map((entry) => entry.ticker), [openEntries]);
+  const exportStrategy = useMemo(() => {
+    const slugs = new Set(openEntries.map((entry) => entry.strategy_slug));
+    return slugs.size === 1 ? openEntries[0].strategy_slug : 'midterm_52w_high_momentum';
+  }, [openEntries]);
+
   // Baseline of the last persisted live state per entry, captured once (inside
   // the fetch effect, before we overwrite it), so we can flag a ticker that
   // newly became entry-ready since the owner last looked.
@@ -166,13 +176,16 @@ export default function WatchlistPage() {
           </p>
         </div>
         {openEntries.length > 0 ? (
-          <button
-            className="shrink-0 border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-100"
-            onClick={refresh}
-            type="button"
-          >
-            Refresh
-          </button>
+          <div className="flex shrink-0 items-start gap-2">
+            <CopyWatchlistAdvisorPrompt tickers={exportTickers} strategySlug={exportStrategy} />
+            <button
+              className="shrink-0 border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-100"
+              onClick={refresh}
+              type="button"
+            >
+              Refresh
+            </button>
+          </div>
         ) : null}
       </header>
 

@@ -1,8 +1,8 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/016-momentum-cockpit/plan.md` (active feature 016), which builds on
-the 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
+`specs/017-export-sentiment-narrative/plan.md` (active feature 017), which builds on
+the 016 momentum-cockpit, 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
 012 entry-timing-coverage, 011 auto-refresh-risk-sizing, 010 online-deployment, 009
 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005 value strategy,
 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.

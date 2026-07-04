@@ -9,8 +9,10 @@ from pydantic import BaseModel, Field
 from ..agent.advisor_prompt import (
     build_holding_advisor_prompt,
     build_portfolio_advisor_prompt,
+    build_watchlist_advisor_prompt,
     load_survivorship_status,
 )
+from .analyze import _market_universe, compute_candidate_result
 from ..data.portfolio_store import (
     load_portfolio_state,
     load_transactions,
@@ -19,6 +21,8 @@ from ..data.portfolio_store import (
 )
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..lib.flags import personal_use_directive, portfolio_heat_ceiling
+from ..models.sentiment import SentimentReport
+from ..sentiment.store import CapturedReportStore as _CapturedReportStore
 from ..models.portfolio import (
     HoldingAdvisorPromptResponse,
     ImportRequest,
@@ -48,6 +52,52 @@ from ..strategies._registry import registry
 _SUPPORTED_HOLDINGS_STRATEGY = "midterm_52w_high_momentum"
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
+
+# Kept as a module global so tests can inject a temp/seeded store without touching
+# the real captured-report DB (mirrors api/strategies.py).
+CapturedReportStore = _CapturedReportStore
+
+
+def _resolve_captured_sentiment(tickers) -> dict[str, SentimentReport]:
+    """Best-effort resolve the most-recently captured sentiment report per ticker
+    (feature 017). Reads the store only — never triggers source collection, scoring,
+    or narrative generation (FR-009). Any per-ticker error omits only that ticker's
+    section (fail-soft, FR-010)."""
+    try:
+        store = CapturedReportStore()
+    except Exception:
+        return {}
+    resolved: dict[str, SentimentReport] = {}
+    for ticker in tickers:
+        try:
+            report = store.latest_for_ticker(ticker)
+        except Exception:
+            report = None
+        if report is not None:
+            resolved[ticker] = report
+    return resolved
+
+
+_WATCHLIST_EXPORT_STRATEGIES = ("midterm_52w_high_momentum", "midterm_value_composite")
+
+
+class WatchlistAdvisorPromptRequest(BaseModel):
+    """Owner's watched names to export in the screener-results prompt format
+    (feature 017 US3). An empty `tickers` list is valid and yields a clear
+    'no watched names' prompt state (FR-013)."""
+
+    strategy_slug: str = "midterm_52w_high_momentum"
+    tickers: list[str] = Field(default_factory=list)
+    as_of: str | None = None
+
+
+class WatchlistAdvisorPromptResponse(BaseModel):
+    strategy: str
+    watched_count: int
+    personal_use_directive: bool
+    prompt: str
+    data_as_of: str
+    disclaimer: str
 
 
 class PortfolioStateEnvelope(BaseModel):
@@ -360,6 +410,9 @@ def portfolio_holdings_advisor_prompt(
     open_holdings = [h for h in holdings if h.status == "open"]
     strategy = registry.get(body.strategy_slug)
     directive = personal_use_directive()
+    sentiment_by_ticker = _resolve_captured_sentiment(
+        [h.ticker for h in open_holdings]
+    )
     prompt = build_portfolio_advisor_prompt(
         open_holdings,
         totals,
@@ -367,6 +420,7 @@ def portfolio_holdings_advisor_prompt(
         survivorship=load_survivorship_status(slug=body.strategy_slug),
         regime=_best_effort_regime(),
         directive=directive,
+        sentiment_by_ticker=sentiment_by_ticker,
     )
     return PortfolioAdvisorPromptResponse(
         strategy=body.strategy_slug,
@@ -374,6 +428,85 @@ def portfolio_holdings_advisor_prompt(
         personal_use_directive=directive,
         prompt=prompt,
         data_as_of=newest_as_of or utc_now_iso(),
+        disclaimer=DISCLAIMER_TEXT,
+    )
+
+
+@router.post("/watchlist/advisor-prompt", response_model=WatchlistAdvisorPromptResponse)
+def watchlist_advisor_prompt(
+    body: WatchlistAdvisorPromptRequest,
+) -> WatchlistAdvisorPromptResponse:
+    """One copy-ready advisor prompt over the owner's watched names, in the same
+    screener-results format (feature 017 US3).
+
+    Each watched ticker is re-computed against the current snapshot via
+    `compute_candidate_result` (best-effort per ticker: an unresolvable name still
+    appears with a no-coverage note). Its most-recently captured sentiment report
+    is resolved from the store and embedded; the export triggers NO fresh source
+    collection / scoring / narrative generation (FR-009). An empty watchlist is
+    valid and returns a clear 'no watched names' body (FR-013)."""
+    strategy = registry.get(body.strategy_slug)
+    if strategy is None or body.strategy_slug not in _WATCHLIST_EXPORT_STRATEGIES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Watchlist advisor-prompt export is available for the mid-term "
+                "strategies (midterm_52w_high_momentum, midterm_value_composite)"
+            ),
+        )
+
+    # Build the percentile-gate universe snapshot ONCE for momentum and reuse it
+    # across every watched ticker instead of rebuilding it per compute call.
+    market_universe = None
+    if body.strategy_slug == "midterm_52w_high_momentum" and body.tickers:
+        try:
+            market_universe = _market_universe(body.tickers[0], body.as_of)
+        except Exception:
+            market_universe = None
+        if market_universe is not None and market_universe.empty:
+            market_universe = None
+
+    results = []
+    unresolved: list[str] = []
+    newest_as_of: str | None = None
+    for ticker in body.tickers:
+        symbol = str(ticker).strip().upper()
+        try:
+            result = compute_candidate_result(
+                symbol,
+                strategy=body.strategy_slug,
+                as_of=body.as_of,
+                market_universe=market_universe,
+            )
+        except Exception:
+            unresolved.append(symbol)
+            continue
+        results.append(result)
+        if result.data_as_of:
+            newest_as_of = max(newest_as_of or result.data_as_of, result.data_as_of)
+
+    sentiment_by_ticker = _resolve_captured_sentiment(
+        [r.ticker for r in results] + unresolved
+    )
+    directive = personal_use_directive()
+    data_as_of = newest_as_of or utc_now_iso()
+    prompt = build_watchlist_advisor_prompt(
+        strategy,
+        results,
+        survivorship=load_survivorship_status(slug=body.strategy_slug),
+        regime=_best_effort_regime(),
+        directive=directive,
+        data_as_of=data_as_of,
+        disclaimer=DISCLAIMER_TEXT,
+        unresolved=unresolved,
+        sentiment_by_ticker=sentiment_by_ticker,
+    )
+    return WatchlistAdvisorPromptResponse(
+        strategy=body.strategy_slug,
+        watched_count=len(results) + len(unresolved),
+        personal_use_directive=directive,
+        prompt=prompt,
+        data_as_of=data_as_of,
         disclaimer=DISCLAIMER_TEXT,
     )
 
@@ -397,12 +530,14 @@ def holding_advisor_prompt(
         )
     strategy = registry.get(body.strategy_slug)
     directive = personal_use_directive()
+    sentiment = _resolve_captured_sentiment([match.ticker]).get(match.ticker)
     prompt = build_holding_advisor_prompt(
         match,
         strategy,
         survivorship=load_survivorship_status(slug=body.strategy_slug),
         regime=_best_effort_regime(),
         directive=directive,
+        sentiment=sentiment,
     )
     return HoldingAdvisorPromptResponse(
         ticker=symbol,

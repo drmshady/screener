@@ -16,12 +16,38 @@ from ..models.strategy import (
     ScreenRunRequest,
     Strategy,
 )
+from ..models.sentiment import SentimentReport
 from ..screening.engine import run_strategy
 from ..screening.midterm_matrix import run_midterm_matrix
+from ..sentiment.store import CapturedReportStore as _CapturedReportStore
 from ..strategies._registry import registry
 from .. import strategies as _strategies  # noqa: F401 - registers strategy modules
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
+
+# Kept as a module global so tests can inject a temp/seeded store without touching
+# the real captured-report DB.
+CapturedReportStore = _CapturedReportStore
+
+
+def _resolve_captured_sentiment(tickers) -> dict[str, SentimentReport]:
+    """Best-effort resolve the most-recently captured sentiment report per ticker
+    (feature 017). Reads the store only — never triggers source collection, scoring,
+    or narrative generation (FR-009). Any per-ticker error omits only that ticker's
+    section (fail-soft, FR-010)."""
+    try:
+        store = CapturedReportStore()
+    except Exception:
+        return {}
+    resolved: dict[str, SentimentReport] = {}
+    for ticker in tickers:
+        try:
+            report = store.latest_for_ticker(ticker)
+        except Exception:
+            report = None
+        if report is not None:
+            resolved[ticker] = report
+    return resolved
 
 
 class StrategiesResponse(BaseModel):
@@ -150,11 +176,15 @@ def screen_advisor_prompt(slug: str, request: ScreenRunRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     directive = personal_use_directive()
+    sentiment_by_ticker = _resolve_captured_sentiment(
+        [c.ticker for c in screen.candidates]
+    )
     prompt = build_screen_advisor_prompt(
         screen,
         strat,
         survivorship=load_survivorship_status(slug=slug),
         directive=directive,
+        sentiment_by_ticker=sentiment_by_ticker,
     )
     return ScreenAdvisorPromptResponse(
         strategy=slug,

@@ -16,6 +16,19 @@ const ROUTES = [
 
 const FORBIDDEN_WORDS = [' Buy', ' Sell', 'Recommended', 'Strong buy'];
 
+// Feature 017 (T025 / FR-006 / SC-005): the embedded sentiment & narrative block
+// that all three exports (screen / portfolio / watchlist) render. Mirrors the
+// backend `_sentiment_section` renderer's app-authored framing — it MUST stay
+// directive-free just like app chrome. Embedded into each export's mocked prompt
+// below so the rendered preview exercises this copy.
+const SENTIMENT_SECTION =
+  '\n### External context — sentiment & narrative (informational; does NOT change gates/levels)\n' +
+  '- Sentiment label: POSITIVE — Lexicon score +1.00 from 2 positive and 0 negative term hits.\n' +
+  '- Narrative (template): NVDA recent sourced context describes stronger demand and a raised outlook.\n' +
+  '- Narrative risk: 30/100 (Contained) — signals: earnings beat; raised guidance\n' +
+  '- Sources (news present; filing_8k, earnings, analyst_opinion, social omitted):\n' +
+  '  - Fixture News, 2026-07-01 — NVDA raises guidance after strong demand';
+
 // Feature 004 / FR-014: the advisor-prompt preview is the ONE place that may
 // carry directive framing, and only in personal-use mode where it is marked
 // with `data-personal-use-prompt`. Exclude exactly that element from the lint.
@@ -270,7 +283,9 @@ test('no directive trading language in the held-position advisor-prompt preview'
         holding_count: 1,
         personal_use_directive: false,
         prompt:
-          'TASK: review the positions the user ALREADY HOLDS.\n\n## Held position — TESTCO (Technology)\n- Suggested size: 8 shares vs actual 10 shares\n- Capital at risk: 180.00\n\n## Honesty & limitations\n- Fixture disclaimer',
+          'TASK: review the positions the user ALREADY HOLDS.\n\n## Held position — TESTCO (Technology)\n- Suggested size: 8 shares vs actual 10 shares\n- Capital at risk: 180.00\n' +
+          SENTIMENT_SECTION +
+          '\n\n## Honesty & limitations\n- Fixture disclaimer',
         data_as_of: '2026-06-11T21:00:00Z',
         disclaimer: 'Fixture disclaimer',
       }),
@@ -441,4 +456,155 @@ test('sentiment report renders identical sourced copy for the same selection', a
   await expect(page.locator('article')).toHaveCount(1);
   expect(await page.locator('article').innerText()).toBe(firstRender);
   expect(requestCount).toBe(2);
+});
+
+// ---------------------------------------------------------------------------
+// Feature 017 (T025 / FR-006 / SC-005): the rendered `prompt` preview of ALL
+// THREE exports must stay directive-free, including the embedded sentiment &
+// narrative section. The portfolio (US2) export preview above already embeds
+// SENTIMENT_SECTION; these two cover the screen (US1) and watchlist (US3)
+// export previews.
+// ---------------------------------------------------------------------------
+
+function screenCandidate(ticker: string) {
+  return {
+    ticker,
+    name: `${ticker} Inc`,
+    sector: 'Technology',
+    strategy_slug: 'midterm_52w_high_momentum',
+    current_price: '100.00',
+    entry: '100.00',
+    stop_loss: '90.00',
+    tighter_stop_loss: '95.00',
+    take_profit: '130.00',
+    rank: 1,
+    score: 0.5,
+    reason: 'matched',
+    return_12_1: 0.4,
+    gate_results: [{ gate: '52-week-high proximity', status: 'pass', detail: '1% below high' }],
+    recent_8k_count_30d: 0,
+  };
+}
+
+test('no directive trading language in the screener-results advisor-prompt preview', async ({ page }) => {
+  await isolatePortfolioState(page);
+
+  await page.route('**/strategies/midterm_52w_high_momentum/run', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'screen-1',
+        strategy_slug: 'midterm_52w_high_momentum',
+        as_of_date: '2026-06-12',
+        parameters_snapshot: {},
+        filters_snapshot: {},
+        candidate_count: 1,
+        candidates: [screenCandidate('NVDA')],
+        computed_at: '2026-06-12T00:00:00Z',
+        data_as_of: '2026-06-12T21:00:00Z',
+        disclaimer: 'Fixture disclaimer',
+        regime: 'Trending up',
+      }),
+    });
+  });
+
+  // Non-directive prompt WITH the embedded sentiment section — the preview is NOT
+  // exempt from the lint.
+  await page.route('**/strategies/midterm_52w_high_momentum/advisor-prompt', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        strategy: 'midterm_52w_high_momentum',
+        candidate_count: 1,
+        personal_use_directive: false,
+        prompt:
+          '## Strategy — Mid-Term 52-Week High Momentum\n\n### #1 NVDA — NVDA Inc (Technology)\n- Entry 100.00 | Stop 90.00 | Target 130.00\n' +
+          SENTIMENT_SECTION +
+          '\n\n## Honesty & limitations\n- Fixture disclaimer',
+        data_as_of: '2026-06-12T21:00:00Z',
+        disclaimer: 'Fixture disclaimer',
+      }),
+    });
+  });
+
+  await page.goto('/screen/midterm_52w_high_momentum');
+  await page.getByRole('button', { name: 'Run Screen' }).click();
+
+  const copyButton = page.getByRole('button', { name: 'Copy advisor prompt (all results)' });
+  await expect(copyButton).toBeVisible();
+  await copyButton.click();
+
+  const preview = page.getByTestId('screen-advisor-prompt-preview');
+  await page
+    .locator('details:has([data-testid="screen-advisor-prompt-preview"]) summary')
+    .click();
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText('External context');
+
+  await assertNoDirectiveCopy(page);
+});
+
+test('no directive trading language in the watchlist advisor-prompt preview', async ({ page }) => {
+  await isolatePortfolioState(page);
+  await seedStorage(page, {
+    portfolio: {
+      schema_version: 3,
+      total_capital: 100000,
+      holdings: [],
+      created_at: '2026-06-11T00:00:00Z',
+      updated_at: '2026-06-11T00:00:00Z',
+      local_storage_notice_acknowledged: true,
+    },
+    watchlist: [
+      {
+        id: 'midterm_52w_high_momentum-NVDA',
+        ticker: 'NVDA',
+        name: 'NVDA Inc',
+        sector: 'Technology',
+        strategy_slug: 'midterm_52w_high_momentum',
+        saved_at: '2026-06-10T00:00:00Z',
+        state: 'saved',
+        levels_snapshot: { entry: '100.00', stop_loss: '90.00', take_profit: '130.00' },
+      },
+    ],
+    settings: SETTINGS,
+    transactions: [],
+    sheet_id: null,
+    sheet_range: null,
+  });
+
+  await page.route('**/analyze/NVDA**', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(analyzeBody('NVDA', true)) });
+  });
+
+  await page.route('**/portfolio/watchlist/advisor-prompt', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        strategy: 'midterm_52w_high_momentum',
+        watched_count: 1,
+        personal_use_directive: false,
+        prompt:
+          '## Strategy — Mid-Term 52-Week High Momentum\n\n### NVDA — NVDA Inc (Technology)\n- Entry 100.00 | Stop 90.00 | Target 130.00\n' +
+          SENTIMENT_SECTION +
+          '\n\n## Honesty & limitations\n- Fixture disclaimer',
+        data_as_of: '2026-06-12T21:00:00Z',
+        disclaimer: 'Fixture disclaimer',
+      }),
+    });
+  });
+
+  await page.goto('/watchlist');
+  const copyButton = page.getByRole('button', { name: 'Copy watchlist advisor prompt' });
+  await expect(copyButton).toBeVisible();
+  await copyButton.click();
+
+  const preview = page.getByTestId('watchlist-advisor-prompt-preview');
+  await page
+    .locator('details:has([data-testid="watchlist-advisor-prompt-preview"]) summary')
+    .click();
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText('External context');
+
+  await assertNoDirectiveCopy(page);
 });
