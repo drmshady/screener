@@ -398,3 +398,83 @@ def fit_reward_to_risk_floor() -> float:
     SCREENER_FIT_REWARD_TO_RISK_FLOOR.
     """
     return float(os.getenv("SCREENER_FIT_REWARD_TO_RISK_FLOOR", "1.5"))
+
+
+# --- Feature 018: daily portfolio brief (email digest) knobs ---------------
+
+
+def brief_enabled() -> bool:
+    """Whether the daily AI portfolio-brief email loop is available.
+
+    DEFAULT OFF so ``POST /brief/run`` 404s, the CI trigger step is a no-op, and
+    no email is ever sent — byte-identical to feature 017 until the owner
+    explicitly enables it. Override with SCREENER_BRIEF_ENABLED=1.
+    """
+    return os.getenv("SCREENER_BRIEF_ENABLED", "0").strip().lower() in _TRUTHY
+
+
+def brief_directive_enabled() -> bool:
+    """Whether the brief may use directive (take/pass/size) wording (FR-007/FR-007a).
+
+    Implements the constitution v1.2.0 single-owner-gated carve-out. Returns True
+    ONLY when all hold: the personal-use directive flag is set
+    (``SCREENER_PERSONAL_USE_DIRECTIVE=1``), the single-owner access gate is
+    enforced (``hosting.owner_secret()`` is set — the hosted single-email
+    allowlist fronts every route), and the instance is not multi-user.
+
+    This is intentionally SEPARATE from ``personal_use_directive()`` (which every
+    other surface uses and which ``hosted_mode()`` force-disables) so the carve-out
+    does not broaden directive output to any third-party-reachable surface
+    (research Decision 4, contracts/directive-carveout.md). Unlike
+    ``personal_use_directive()`` it does NOT return False merely because
+    ``hosted_mode()`` is True — the owner-secret access control is exactly what
+    proves the output reaches only the owner's own inbox.
+    """
+    if _brief_multi_user():
+        return False
+    if hosting.owner_secret() is None:
+        return False
+    return os.getenv("SCREENER_PERSONAL_USE_DIRECTIVE", "0").strip().lower() in _TRUTHY
+
+
+def _brief_multi_user() -> bool:
+    """Whether the deployment is multi-user / shared (default single-owner).
+
+    No multi-user flag set ⇒ single-owner deployment. Override with
+    SCREENER_MULTI_USER=1 to opt into the multi-user posture, which reverts the
+    brief to neutral framing (constitution v1.2.0 / FR-006).
+    """
+    return os.getenv("SCREENER_MULTI_USER", "0").strip().lower() in _TRUTHY
+
+
+def brief_smtp_host() -> str:
+    """Gmail SMTP host. Runtime env only. Override with SCREENER_BRIEF_SMTP_HOST."""
+    return os.getenv("SCREENER_BRIEF_SMTP_HOST", "smtp.gmail.com").strip() or "smtp.gmail.com"
+
+
+def brief_smtp_port() -> int:
+    """SMTP STARTTLS port. Override with SCREENER_BRIEF_SMTP_PORT (default 587)."""
+    raw = os.getenv("SCREENER_BRIEF_SMTP_PORT", "587").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 587
+
+
+def brief_smtp_user() -> str | None:
+    """SMTP username (sender). Runtime env only, never logged (FR-015)."""
+    return os.getenv("SCREENER_BRIEF_SMTP_USER") or None
+
+
+def brief_smtp_password() -> str | None:
+    """Gmail app password. Runtime env only, never logged/written (FR-015)."""
+    return os.getenv("SCREENER_BRIEF_SMTP_PASSWORD") or None
+
+
+def brief_recipient() -> str | None:
+    """Single allowlisted owner recipient address. Runtime env only (FR-009)."""
+    value = os.getenv("SCREENER_BRIEF_RECIPIENT")
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None

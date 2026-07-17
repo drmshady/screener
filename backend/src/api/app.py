@@ -12,6 +12,7 @@ from ..lib import hosting
 from . import (
     analyze,
     backtest,
+    brief,
     candidates,
     data,
     events,
@@ -133,6 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(portfolio.router)
     app.include_router(pipeline.router)
     app.include_router(sentiment.router)
+    app.include_router(brief.router)
     app.include_router(screen.router)
     app.include_router(data.router)
     app.include_router(verify.router)

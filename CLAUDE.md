@@ -1,13 +1,42 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/017-export-sentiment-narrative/plan.md` (active feature 017), which builds on
-the 016 momentum-cockpit, 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
+`specs/018-daily-portfolio-brief/plan.md` (active feature 018), which builds on
+the 017 export-sentiment-narrative, 016 momentum-cockpit, 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
 012 entry-timing-coverage, 011 auto-refresh-risk-sizing, 010 online-deployment, 009
 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005 value strategy,
 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 016-momentum-cockpit
+## Active feature: 018-daily-portfolio-brief
+
+Plan: `specs/018-daily-portfolio-brief/plan.md`. Adds an automated,
+once-per-trading-session **daily brief email** that, without the owner opening the app,
+assembles one self-contained digest: (US1) portfolio status — total value, overall +
+per-holding P&L, risk exposure/**heat**, and a holdings-**needing-attention** list ordered
+by precedence (risk/heat breach → stop proximity → stage change); (US2) news/sentiment over
+held + watched tickers (since-last-brief window, each with source + as-of) + a market-context
+line (regime + events, never a bare "Unknown"); (US3) **exactly five** priority-ranked
+recommendations from a deterministic tiered ranker (attention → news/sentiment materiality →
+portfolio fill). It is **pure synthesis + delivery** over existing outputs — **no** new
+screening rule, gate, indicator, citation, sizing model, or backtest baseline (FR-002). New
+backend package `backend/src/brief/` (`assemble.py` pure gather → `BriefModel`; `recommend.py`
+the five-item ranker; `render.py` deterministic text/HTML + no-directive lint; `email.py`
+stdlib-`smtplib` Gmail edge, owner-only recipient guard), a `data/brief_store.py` Delivery Run
+Record (`brief_runs.json`, session-keyed idempotency FR-010), and an owner-secret-gated router
+`api/brief.py` (`POST /brief/run` + `GET /brief/status`). All gated by `brief_enabled()`
+(default OFF ⇒ `POST /brief/run` 404s, CI step no-ops, no email — byte-identical to 017).
+Directive wording rides a **new** `brief_directive_enabled()` single-owner carve-out
+(personal-use flag ON **and** owner-secret set **and** not multi-user) — separate from the
+hosted-forced-OFF `personal_use_directive()`; neutral, non-directive framing is the default and
+never drops the recommendation section (FR-006/007a). Trigger = a new final step in the
+feature-011 `daily-refresh.yml` (gated on `steps.publish.outputs.published == 'true'`,
+`continue-on-error` so a send failure never rolls back the publish). Determinism
+(`generated_at` is the only field excluded from `content_hash`), `data_as_of` + disclaimer on
+every brief, and SMTP secrets runtime-env-only (`SCREENER_BRIEF_*`, never logged/committed,
+FR-015) preserved end-to-end. Deploy = code-only HF Space `force_rebuild` + Space runtime
+secrets. Momentum primary; value tests still pass.
+
+## Prior feature: 016-momentum-cockpit
 
 Plan: `specs/016-momentum-cockpit/plan.md`. Adds the **connective layer**: a momentum-only
 candidate **lifecycle pipeline** (watch → ready → staged → owned → managing → exited) and a

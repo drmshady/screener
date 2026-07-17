@@ -63,6 +63,7 @@ jobs:
       # short-circuits before any build/push/deploy. Secrets are read from
       # the environment only, never written to a file.
       - name: Run publish chain (guard, refresh, integrity, secret-scan, build, push, deploy)
+        id: publish
         shell: pwsh
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -85,6 +86,57 @@ jobs:
             ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy -SkipGuard
           } else {
             ./scripts/publish_chain.ps1 -Image $env:IMAGE -SpaceId $env:SPACE_ID -Deploy
+          }
+
+      # Feature 018 (research Decision 3): after a REAL publish (a new session was
+      # baked and the Space re-pulled the fresh image), trigger the owner's daily
+      # portfolio brief on the hosted backend. Gated on the publish step's
+      # `published == 'true'` output so a guard `noop` day makes no call and leaves
+      # a clean run log. `force_rebuild` ⇒ published=true (code-only deploy).
+      #
+      # continue-on-error (FR-012): a brief-send failure is SURFACED (annotated
+      # below) but MUST NOT fail or roll back the already-successful publish job --
+      # the fresh snapshot stays live. The backend independently re-checks
+      # idempotency + trading-day status, so a spurious call still cannot send a
+      # duplicate or a non-trading-day brief.
+      - name: Trigger daily portfolio brief
+        id: brief
+        if: steps.publish.outputs.published == 'true'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          SCREENER_OWNER_SECRET: ${{ secrets.SCREENER_OWNER_SECRET }}
+          # Hosted backend base URL (defaults to the HF Space URL derived from SPACE_ID).
+          SCREENER_BACKEND_URL: ${{ secrets.SCREENER_BACKEND_URL }}
+        run: |
+          if (-not $env:SCREENER_OWNER_SECRET) {
+            Write-Host 'SCREENER_OWNER_SECRET not set -- skipping brief trigger.'
+            exit 0
+          }
+          $base = $env:SCREENER_BACKEND_URL
+          if (-not $base) {
+            # HF Space URL: https://<owner>-<space>.hf.space
+            $slug = ($env:SPACE_ID -replace '/', '-')
+            $base = "https://$slug.hf.space"
+          }
+          $uri = "$base/brief/run"
+          $headers = @{ 'X-Owner-Secret' = $env:SCREENER_OWNER_SECRET; 'Content-Type' = 'application/json' }
+          # Retry across the Space cold-start after a factory rebuild.
+          $ok = $false
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              $resp = Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -Body '{}' -TimeoutSec 60
+              Write-Host "Brief run: status=$($resp.status) target=$($resp.target_session)"
+              $ok = $true
+              break
+            } catch {
+              Write-Host "Brief trigger attempt $attempt failed: $($_.Exception.Message)"
+              Start-Sleep -Seconds (20 * $attempt)
+            }
+          }
+          if (-not $ok) {
+            "::warning title=Daily brief not sent::The brief-trigger call did not succeed after retries. The fresh snapshot remains live; re-run the brief manually if needed." | Out-Host
+            exit 1
           }
 
       # GitHub already emails repo watchers on a failed scheduled workflow run

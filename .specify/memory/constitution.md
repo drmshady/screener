@@ -1,6 +1,43 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.1.0 → 1.2.0
+Bump rationale: MINOR. Re-scopes (does not remove) the personal-use directive
+exception in Principle V so it keys on whether directive output can reach a
+THIRD PARTY, rather than on whether the compute happens to be hosted. A
+single-owner, access-gated hosted instance whose output reaches only its owner
+now qualifies for the same narrow, flag-gated exception. The default no-advice
+boundary is unchanged and remains non-waivable for any multi-user, shared, or
+third-party-exposed instance; all disclosure obligations are preserved.
+
+Driver: feature 018-daily-portfolio-brief. The owner's deployment is hosted
+(feature 010) but single-user and access-gated to one allowlisted email, so its
+output never reaches a third party. The prior "evaporates when hosted" condition
+blocked the safe single-owner case for the wrong reason; this amendment ties the
+boundary to the actual risk (third-party exposure).
+
+Modified principles (v1.2.0):
+- V. User Safety, Risk Disclosure & No-Advice Boundary — evaporation condition
+  changed from "shared, hosted, multi-user, or otherwise redistributed" to
+  "multi-user, shared, sold, or output otherwise exposed to any third party
+  (whether compute is local or hosted)"; added a single-owner access-gate
+  requirement for hosted deployments. Flag-gated + OFF by default + full
+  disclosure preserved.
+
+Template / doc propagation (v1.2.0):
+- ✅ .specify/templates/*.md — no principle-driven section changed; no edits.
+- ⚠ CLAUDE.md / feature 010 — the 010 summary states hosted mode forces
+  personal_use_directive() OFF and non-waivable (FR-009). That remains the
+  DEFAULT but is no longer absolute for a single-owner access-gated host:
+  feature 018's plan MUST implement an explicit single-owner-gated directive
+  carve-out (still flag-gated, still access-gated) rather than a blanket
+  hosted force-off. Flagged for the 018 plan's Constitution Check.
+
+Follow-up TODOs (v1.2.0):
+- Amendment procedure requires review by a maintainer who is not the author;
+  for this single-operator repo the owner records acceptance in the 018 plan.
+
+--- Prior report (v1.1.0) ---
 Version change: 1.0.0 → 1.1.0
 Bump rationale: MINOR. Adds materially expanded, bounded guidance to an
 existing principle (V). It does NOT remove or weaken the default no-advice
@@ -143,33 +180,45 @@ further research") and MUST NOT use directive language ("buy", "sell",
 personally-identifiable information, if stored at all, MUST be encrypted at
 rest and never logged in plaintext.
 
-**Personal-use directive exception** (added v1.1.0): When the app runs in
-single-user, personal-use mode AND its output is NOT redistributed, hosted,
-shared, or sold, directive personalized guidance (e.g. take/pass/size calls,
-position-level reasoning) MAY be produced for that single owner. This
+**Personal-use directive exception** (added v1.1.0; re-scoped v1.2.0): When the
+app serves a single identified owner about their own decisions AND its directive
+output is NOT redistributed, shared, sold, or exposed to any third party,
+directive personalized guidance (e.g. take/pass/size calls, position-level
+reasoning) MAY be produced for that single owner. Hosting the tool for the
+owner's own use does NOT by itself forfeit this exception, provided access is
+gated to the single owner and no third party can receive the output. This
 exception is NARROW and conditional:
 
 - It MUST be gated behind an explicit operator flag that is OFF by default
   (the implementing flag is `SCREENER_PERSONAL_USE_DIRECTIVE`). When the flag
   is off, the neutral no-directive default above fully applies.
+- For any HOSTED deployment, an enforced single-owner access gate (e.g. a
+  single-email allowlist fronting all data routes) MUST be in place so that
+  only the owner can receive the directive output; without such a gate the
+  neutral default applies unconditionally.
 - Even when enabled, every directive output MUST still carry the strategy
   citation, the data as-of date, and the non-advice / limitations disclosure
   (including any failing bias check, e.g. survivorship).
-- The exception EVAPORATES automatically the moment the instance is shared,
-  hosted, multi-user, or otherwise redistributed: in any such context the
-  neutral no-directive boundary is mandatory and non-waivable, and the
-  "licensed/permissive provider" data-source obligations re-attach.
+- The exception EVAPORATES automatically the moment the instance becomes
+  multi-user, shared, sold, or its output is otherwise exposed to any third
+  party — regardless of whether the compute is local or hosted. In any such
+  context the neutral no-directive boundary is mandatory and non-waivable, and
+  the "licensed/permissive provider" data-source obligations re-attach.
 - This exception applies ONLY to first-person guidance for the tool's single
   operator about their own decisions; it is never a license to present
   directive output to any third party.
 
-**Rationale**: For a hosted or shared tool, talking like a financial advisor
+**Rationale**: For a shared or multi-user tool, talking like a financial advisor
 invites both legal risk and user harm, so the neutral boundary is the
-non-negotiable default. But a private, single-user tool advising its own owner
-about their own money is not regulated advice; forbidding the owner from
-asking their own tool for a direct answer serves no one. The flag + automatic
-reversion keep the dangerous case (output reaching third parties) closed while
-permitting the safe, private case.
+non-negotiable default. But a private tool advising its own single owner about
+their own money is not regulated advice; forbidding the owner from asking their
+own tool for a direct answer serves no one. The dangerous case is directive
+output reaching a THIRD PARTY — not the mere fact that the compute runs on a
+server. A single-owner, access-gated hosted instance is functionally the same
+private case as a laptop, so v1.2.0 ties the boundary to third-party exposure
+rather than to hosting. The flag + single-owner access gate + automatic
+reversion keep the dangerous case closed while permitting the safe, private
+case whether the owner runs the tool locally or hosts it for their own use.
 
 ## Data, Compliance & Performance Standards
 
@@ -203,8 +252,9 @@ each provider's redistribution and retention terms.
 **Compliance**:
 - No personalized recommendations and no "buy/sell" labels by default. The
   sole exception is the single-user, personal-use directive mode defined in
-  Principle V, which is OFF by default and non-waivable for any shared/hosted
-  instance.
+  Principle V, which is OFF by default and remains non-waivable for any
+  multi-user, shared, sold, or third-party-exposed instance. A single-owner,
+  access-gated hosted instance (output reaching only the owner) may enable it.
 - Every page that displays screen output MUST carry a disclaimer that the
   content is for informational purposes only and is not investment advice.
 - No claim of past or future performance may be displayed without the
@@ -270,4 +320,4 @@ Complexity Tracking section with a written rationale.
 implementation details. This constitution governs *what must be true*; those
 documents govern *how it is built*.
 
-**Version**: 1.1.0 | **Ratified**: 2026-06-10 | **Last Amended**: 2026-06-13
+**Version**: 1.2.0 | **Ratified**: 2026-06-10 | **Last Amended**: 2026-07-08

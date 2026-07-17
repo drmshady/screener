@@ -54,6 +54,16 @@ Set-Location $RepoRoot
 function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Die($msg)  { Write-Host "::error::FAILED: $msg" -ForegroundColor Red; exit 1 }
 
+# Feature 018 (research Decision 3): surface whether this run actually published a
+# new session as a GitHub Actions step output so the workflow can gate the daily
+# brief-trigger step on a real publish (not a guard `noop`). A no-op on a local
+# run (no $GITHUB_OUTPUT) -- the file is only present under Actions.
+function Set-Published([string]$value) {
+    if ($env:GITHUB_OUTPUT) {
+        "published=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+    }
+}
+
 # Native-command runner that aborts on nonzero exit (PS 5.1 has no `&&`).
 function Run($exe, [string[]]$cmdArgs) {
     Write-Host "> $exe $($cmdArgs -join ' ')" -ForegroundColor DarkGray
@@ -126,6 +136,7 @@ if ($SkipGuard) {
     $guardOutput | Select-Object -SkipLast 1 | ForEach-Object { Write-Host $_ }
     if ($outcome -eq 'noop') {
         Write-Host 'No new completed trading session to publish -- documented no-op.' -ForegroundColor Yellow
+        Set-Published 'false'
         exit 0
     }
     Write-Host "Guard: $outcome" -ForegroundColor Green
@@ -226,5 +237,9 @@ if ($Deploy) {
     Step 'NEXT STEP -- deploy manually'
     Write-Host "Image published. Factory-reboot https://huggingface.co/spaces/$SpaceId to go live (a plain Restart will NOT re-pull the new image)." -ForegroundColor Yellow
 }
+
+# A new session was published (or a -SkipGuard code-only deploy ran): let the
+# workflow fire the daily brief-trigger step (research Decision 3).
+Set-Published 'true'
 
 Write-Host "`nDone." -ForegroundColor Green
