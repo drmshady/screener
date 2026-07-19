@@ -413,11 +413,10 @@ def brief_enabled() -> bool:
     return os.getenv("SCREENER_BRIEF_ENABLED", "0").strip().lower() in _TRUTHY
 
 
-def brief_directive_enabled() -> bool:
-    """Whether the brief may use directive (take/pass/size) wording (FR-007/FR-007a).
+def _single_owner_directive_carveout() -> bool:
+    """Shared single-owner directive carve-out predicate (constitution v1.2.0).
 
-    Implements the constitution v1.2.0 single-owner-gated carve-out. Returns True
-    ONLY when all hold: the personal-use directive flag is set
+    Returns True ONLY when all hold: the personal-use directive flag is set
     (``SCREENER_PERSONAL_USE_DIRECTIVE=1``), the single-owner access gate is
     enforced (``hosting.owner_secret()`` is set — the hosted single-email
     allowlist fronts every route), and the instance is not multi-user.
@@ -425,10 +424,14 @@ def brief_directive_enabled() -> bool:
     This is intentionally SEPARATE from ``personal_use_directive()`` (which every
     other surface uses and which ``hosted_mode()`` force-disables) so the carve-out
     does not broaden directive output to any third-party-reachable surface
-    (research Decision 4, contracts/directive-carveout.md). Unlike
+    (research Decision 3/4, contracts/directive-carveout.md). Unlike
     ``personal_use_directive()`` it does NOT return False merely because
     ``hosted_mode()`` is True — the owner-secret access control is exactly what
-    proves the output reaches only the owner's own inbox.
+    proves the output reaches only the owner.
+
+    Both ``brief_directive_enabled()`` (feature 018) and
+    ``card_directive_enabled()`` (feature 019) gate on this one predicate so the
+    carve-out is defined in exactly one place.
     """
     if _brief_multi_user():
         return False
@@ -437,12 +440,33 @@ def brief_directive_enabled() -> bool:
     return os.getenv("SCREENER_PERSONAL_USE_DIRECTIVE", "0").strip().lower() in _TRUTHY
 
 
+def brief_directive_enabled() -> bool:
+    """Whether the brief may use directive (take/pass/size) wording (FR-007/FR-007a).
+
+    Feature 018. Gates on the shared single-owner directive carve-out
+    (``_single_owner_directive_carveout``). Behavior is unchanged from when this
+    logic lived inline here.
+    """
+    return _single_owner_directive_carveout()
+
+
+def card_directive_enabled() -> bool:
+    """Whether the portfolio position cards may show a directive verb (FR-008).
+
+    Feature 019. Gates on the same shared single-owner directive carve-out as the
+    feature-018 brief (``_single_owner_directive_carveout``): personal-use flag ON
+    + owner-secret set + not multi-user. Neutral ``status_label`` is the default
+    and the instruction section is never dropped when this returns False.
+    """
+    return _single_owner_directive_carveout()
+
+
 def _brief_multi_user() -> bool:
     """Whether the deployment is multi-user / shared (default single-owner).
 
     No multi-user flag set ⇒ single-owner deployment. Override with
     SCREENER_MULTI_USER=1 to opt into the multi-user posture, which reverts the
-    brief to neutral framing (constitution v1.2.0 / FR-006).
+    directive carve-out to neutral framing (constitution v1.2.0 / FR-006).
     """
     return os.getenv("SCREENER_MULTI_USER", "0").strip().lower() in _TRUTHY
 

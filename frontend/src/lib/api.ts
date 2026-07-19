@@ -922,6 +922,21 @@ export const HoldingRiskSchema = z.object({
   fail_open: z.boolean(),
 });
 
+// Feature 019 (US1): additive per-holding status + gated Hold/Trim/Sell verb.
+export const InstructionInputsSchema = z.object({
+  level_status: z.string(),
+  distance_to_stop_pct: z.number().nullable().optional(),
+  heat_headroom_pct: z.number().nullable().optional(),
+  stage: z.string().nullable().optional(),
+});
+
+export const InstructionBlockSchema = z.object({
+  status_label: z.string(),
+  directive: z.enum(['hold', 'trim', 'sell']).nullable().optional(),
+  rationale: z.string(),
+  inputs: InstructionInputsSchema,
+});
+
 export const PortfolioHoldingSchema = z.object({
   ticker: z.string(),
   net_quantity: z.string(),
@@ -940,6 +955,8 @@ export const PortfolioHoldingSchema = z.object({
   data_as_of: z.string().nullable().optional(),
   levels: HoldingLevelsSchema.nullable().optional(),
   risk: HoldingRiskSchema.nullable().optional(),
+  // Feature 019: absent on pre-019 responses ⇒ back-compatible.
+  instruction: InstructionBlockSchema.nullable().optional(),
 });
 
 export const PortfolioTotalsSchema = z.object({
@@ -963,6 +980,9 @@ export const PortfolioHoldingsResponseSchema = z.object({
   totals: PortfolioTotalsSchema,
   // Feature 016 (US4): FIFO realized round-trip history (empty when no closed lots).
   realized_trades: z.array(RealizedTradeSchema).optional().default([]),
+  // Feature 019 (US1): whether cards may render the Hold/Trim/Sell verb.
+  // Absent on pre-019 responses ⇒ neutral status only (FR-008).
+  directive_enabled: z.boolean().optional().default(false),
   data_as_of: z.string(),
   disclaimer: z.string(),
 });
@@ -971,6 +991,7 @@ export type PortfolioTotals = z.infer<typeof PortfolioTotalsSchema>;
 
 export type LevelBlock = z.infer<typeof LevelBlockSchema>;
 export type HoldingRisk = z.infer<typeof HoldingRiskSchema>;
+export type InstructionBlock = z.infer<typeof InstructionBlockSchema>;
 export type PortfolioHoldingWithLevels = z.infer<typeof PortfolioHoldingSchema>;
 export type PortfolioHoldingsResponse = z.infer<typeof PortfolioHoldingsResponseSchema>;
 

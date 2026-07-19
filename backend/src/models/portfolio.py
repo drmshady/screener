@@ -307,6 +307,35 @@ class HoldingRisk(BaseModel):
     fail_open: bool = False
 
 
+class InstructionInputs(BaseModel):
+    """Echo of the deciding facts behind an `InstructionBlock`, for auditability
+    and determinism (Feature 019, data-model.md). No new computation — every
+    value is copied from the holding's already-derived levels/risk/stage.
+    """
+
+    level_status: str
+    distance_to_stop_pct: float | None = None
+    heat_headroom_pct: float | None = None
+    stage: str | None = None
+
+
+class InstructionBlock(BaseModel):
+    """Per-holding synthesis of status + (gated) directive verb (Feature 019).
+
+    Additive/optional on the holdings response so existing consumers stay
+    byte-identical when it is absent. `status_label` is always present and safe
+    to show in any mode; `directive` (`hold|trim|sell`) appears only under the
+    single-owner directive carve-out AND when levels are sufficient (FR-008).
+    Derived purely by `portfolio/instruction.derive_instruction`; the AI
+    sentiment score is never an input (FR-007).
+    """
+
+    status_label: str
+    directive: Literal["hold", "trim", "sell"] | None = None
+    rationale: str
+    inputs: InstructionInputs
+
+
 class PortfolioHolding(Holding):
     priceable: bool = False
     sector: str = "Unclassified"
@@ -317,6 +346,9 @@ class PortfolioHolding(Holding):
     data_as_of: str | None = None
     levels: HoldingLevels | None = None
     risk: HoldingRisk | None = None
+    # Feature 019: additive, optional per-holding status + gated directive verb.
+    # None ⇒ byte-identical to pre-019 consumers (data-model.md).
+    instruction: InstructionBlock | None = None
 
 
 class PortfolioHoldingsRequest(BaseModel):
@@ -391,6 +423,10 @@ class PortfolioHoldingsResponse(BaseModel):
     # Feature 016 (US4): FIFO realized round-trip history (empty when no closed
     # lots). Informational only; the table renders win/loss detail from it.
     realized_trades: list[RealizedTrade] = Field(default_factory=list)
+    # Feature 019: whether the single-owner directive carve-out is active, driving
+    # whether cards render the Hold/Trim/Sell verb (else the neutral status_label).
+    # Defaults False ⇒ byte-identical to pre-019 responses (data-model.md).
+    directive_enabled: bool = False
     data_as_of: str = Field(default_factory=utc_now_iso)
     disclaimer: str = DISCLAIMER_TEXT
 

@@ -21,6 +21,7 @@ from ..data.portfolio_store import (
 )
 from ..lib.disclaimer import DISCLAIMER_TEXT, utc_now_iso
 from ..lib.flags import (
+    card_directive_enabled,
     personal_use_directive,
     portfolio_heat_ceiling,
     sentiment_export_generation,
@@ -48,6 +49,7 @@ from ..models.portfolio import (
 from ..portfolio.aggregation import aggregate
 from ..portfolio.holding_levels import compute_holding_levels
 from ..portfolio.holding_risk import compute_holding_risk
+from ..portfolio.instruction import derive_instruction
 from ..portfolio.pnl import compute_realized_pnl, compute_unrealized_pnl
 from ..portfolio.transactions import parse_rows
 from ..regime.calculator import current_regime_response
@@ -442,14 +444,43 @@ def _best_effort_regime() -> str | None:
         return None
 
 
+def _attach_instructions(
+    holdings: list[PortfolioHolding],
+    totals: PortfolioTotals,
+    directive_enabled: bool,
+) -> None:
+    """Feature 019 (US1): attach the per-holding Hold/Trim/Sell instruction.
+
+    Pure synthesis over facts already assembled — the current-condition level
+    status/distance and the portfolio heat headroom (FR-013). Only open holdings
+    get a card, so only they get an instruction; the verb is gated on the
+    single-owner carve-out, otherwise the neutral status_label carries (FR-008).
+    """
+    for holding in holdings:
+        if holding.status != "open":
+            continue
+        current = holding.levels.current_condition if holding.levels else None
+        holding.instruction = derive_instruction(
+            level_status=current.status if current else "insufficient_data",
+            levels_state=current.levels_state if current else "insufficient_data",
+            distance_to_stop_pct=current.distance_to_stop_pct if current else None,
+            heat_headroom_pct=totals.heat_headroom_pct,
+            stage=None,  # lifecycle stage is browser-local; refines label frontend-side
+            directive_enabled=directive_enabled,
+        )
+
+
 @router.post("/holdings", response_model=PortfolioHoldingsResponse)
 def portfolio_holdings(body: PortfolioHoldingsRequest) -> PortfolioHoldingsResponse:
     _require_supported_strategy(body.strategy_slug)
     holdings, totals, newest_as_of, realized_trades = _assemble_holdings(body)
+    directive_enabled = card_directive_enabled()
+    _attach_instructions(holdings, totals, directive_enabled)
     return PortfolioHoldingsResponse(
         holdings=holdings,
         totals=totals,
         realized_trades=realized_trades,
+        directive_enabled=directive_enabled,
         data_as_of=newest_as_of or utc_now_iso(),
         disclaimer=DISCLAIMER_TEXT,
     )

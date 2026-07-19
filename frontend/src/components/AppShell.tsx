@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { href: '/sentiment', label: 'Sentiment' },
   { href: '/watchlist', label: 'Watchlist' },
   { href: '/portfolio', label: 'Portfolio' },
+  { href: '/transactions', label: 'Transactions' },
   { href: '/settings', label: 'Settings' },
   { href: '/help', label: 'Help' },
 ];

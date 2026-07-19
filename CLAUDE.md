@@ -1,13 +1,45 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/018-daily-portfolio-brief/plan.md` (active feature 018), which builds on
-the 017 export-sentiment-narrative, 016 momentum-cockpit, 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
+`specs/019-portfolio-position-cards/plan.md` (active feature 019), which builds on
+the 018 daily-portfolio-brief, 017 export-sentiment-narrative, 016 momentum-cockpit, 015 momentum-risk-hardening, 014 ai-sentiment-narrative, 013 portfolio-import-sizing,
 012 entry-timing-coverage, 011 auto-refresh-risk-sizing, 010 online-deployment, 009
 release-readiness, 008 momentum data-integrity, 006 side-by-side compare, 005 value strategy,
 004 advisor export, 003 comparison, 002 validation, and 001 MVP below.
 
-## Active feature: 018-daily-portfolio-brief
+## Active feature: 019-portfolio-position-cards
+
+Plan: `specs/019-portfolio-position-cards/plan.md`. A **presentation-only** pass that turns
+the Portfolio page into an at-a-glance **decision surface** and cleanly separates it from
+transaction bookkeeping — **pure synthesis over existing outputs** with **byte-identical
+compute paths** (FR-013): **no** new endpoint, store, entity, screening rule, gate, indicator,
+citation, sizing model, or backtest baseline. Four user stories: (US1) one **position card**
+per open holding — status/stage, current stop + target (+ trailing), price + unrealized P&L,
+recent news/events (source + as-of, or explicit "nothing new"), auto-loaded AI sentiment
+(lazy, never blocks the shell — SC-005), and a deterministic **Hold/Trim/Sell** call from a new
+pure `backend/src/portfolio/instruction.py` `derive_instruction` (precedence Sell → Trim →
+Hold → levels-unavailable; near-level 0.03 + `portfolio_heat_ceiling()` only, no new threshold;
+the **AI sentiment score is context only, never an input** — FR-007), attached in the
+`/portfolio/holdings` path (advisor-prompt routes stay byte-identical); (US2) **transactions
+move to a dedicated `/transactions` page** (all record/import/ledger/delete controls relocated
+verbatim, shared `syncFromServer`/`loadHoldings` write path; `/portfolio` keeps only a one-click
+link); (US3) **closed positions drop off** the Portfolio card grid (`net_quantity > 0` filter on
+the existing aggregation — no backend change) while staying auditable on `/transactions`;
+(US4) a **realized win/loss scoreboard** reading existing `PortfolioTotals` fields directly
+(won/lost/win-rate/total realized P&L; explicit "No realized history yet" empty state — FR-009).
+Additive backend surface only: `InstructionBlock` + top-level `directive_enabled` on the holdings
+response (optional/back-compatible). The Hold/Trim/Sell verb rides a shared **single-owner
+directive carve-out** — new `card_directive_enabled()` in `backend/src/lib/flags.py`, factored to
+share the private `_single_owner_directive_carveout()` predicate with feature-018's
+`brief_directive_enabled()` (personal-use ON **and** owner-secret set **and** not multi-user);
+neutral status is the default and the instruction section is **never dropped** (FR-008).
+Determinism, `data_as_of`/staleness + disclaimer on **every** card and the summary (FR-012), and
+zero directive language when the carve-out is off preserved end-to-end. New frontend:
+`components/PositionCard.tsx`, `components/RealizedSummary.tsx`, `app/transactions/page.tsx`,
+shared `lib/importedHoldings.ts`; page split on `app/portfolio/page.tsx`. Momentum primary; value
+tests still pass.
+
+## Prior feature: 018-daily-portfolio-brief
 
 Plan: `specs/018-daily-portfolio-brief/plan.md`. Adds an automated,
 once-per-trading-session **daily brief email** that, without the owner opening the app,
